@@ -481,6 +481,105 @@ fi
 date_version=$(date +"%Y%m%d%H")
 echo $date_version > version
 
+
+
+#!/usr/bin/env bash
+#
+# fix-geoview-go.sh
+#
+# 解决 OpenWrt/ImmortalWrt 编译报错：
+#   go: ../../go.mod requires go >= 1.25.0 (running go 1.23.12; GOTOOLCHAIN=local)
+#   ERROR: package/feeds/small/geoview failed to build.
+#
+# 用法（在仓库根目录，即包含 Makefile / feeds.conf.default 的目录下执行）：
+#   1) ./scripts/feeds update -a
+#   2) ./scripts/feeds install -a
+#   3) bash fix-geoview-go.sh
+#   4) make -j$(nproc) 或原来的 make 命令
+#
+# 可选参数：
+#   --disable-geoview   如果不需要联网下载新 go 工具链（比如离线构建环境），
+#                        直接在 .config 里关闭 geoview 及依赖它的插件，
+#                        跳过这个包而不是修复它。
+#
+set -euo pipefail
+
+ROOT_DIR="$(pwd)"
+DISABLE_GEOVIEW=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --disable-geoview)
+      DISABLE_GEOVIEW=1
+      ;;
+    *)
+      echo "未知参数: $arg" >&2
+      exit 1
+      ;;
+  esac
+done
+
+if [ ! -d "$ROOT_DIR/feeds" ] && [ ! -d "$ROOT_DIR/package" ]; then
+  echo "错误：请在 OpenWrt 源码根目录下运行本脚本（需要能看到 feeds/ 或 package/ 目录）。" >&2
+  exit 1
+fi
+
+echo "==> [1/3] 搜索硬编码的 GOTOOLCHAIN=local ..."
+HITS=$(grep -rlE 'GOTOOLCHAIN[[:space:]]*[:?]?=[[:space:]]*local' \
+  --include="*.mk" --include="Makefile" \
+  feeds package include tools toolchain 2>/dev/null || true)
+
+if [ -n "$HITS" ]; then
+  echo "$HITS" | while IFS= read -r f; do
+    [ -z "$f" ] && continue
+    echo "    patch: $f"
+    cp "$f" "$f.bak.$(date +%s)"
+    sed -i -E 's/(GOTOOLCHAIN[[:space:]]*[:?]?=[[:space:]]*)local/\1auto/g' "$f"
+  done
+else
+  echo "    未找到硬编码位置（可能是通过环境变量传递的），继续用环境变量兜底。"
+fi
+
+echo "==> [2/3] 设置 GOTOOLCHAIN=auto 环境变量（本次 shell 及后续 CI step 生效）..."
+export GOTOOLCHAIN=auto
+export GOFLAGS="${GOFLAGS:-} -mod=mod"
+if [ -n "${GITHUB_ENV:-}" ]; then
+  {
+    echo "GOTOOLCHAIN=auto"
+  } >> "$GITHUB_ENV"
+  echo "    已写入 \$GITHUB_ENV，后续 workflow step 会继续携带 GOTOOLCHAIN=auto。"
+fi
+
+if [ "$DISABLE_GEOVIEW" -eq 1 ]; then
+  echo "==> [3/3] --disable-geoview 已指定，尝试在 .config 中关闭 geoview 及相关插件 ..."
+  if [ -f "$ROOT_DIR/.config" ]; then
+    cp "$ROOT_DIR/.config" "$ROOT_DIR/.config.bak.$(date +%s)"
+    # 关闭 geoview 本身
+    sed -i -E 's/^CONFIG_PACKAGE_geoview=y/# CONFIG_PACKAGE_geoview is not set/' "$ROOT_DIR/.config"
+    # 常见依赖 geoview 的插件也一并提示/关闭（passwall2 / homeproxy 系列）
+    for pkg in luci-app-passwall2 luci-i18n-passwall2-zh-cn luci-app-homeproxy luci-i18n-homeproxy-zh-cn; do
+      if grep -q "^CONFIG_PACKAGE_${pkg}=y" "$ROOT_DIR/.config" 2>/dev/null; then
+        echo "    警告：检测到 $pkg 依赖 geoview，一并关闭。若需要该功能，请改用修复方案而非本选项。"
+        sed -i -E "s/^CONFIG_PACKAGE_${pkg}=y/# CONFIG_PACKAGE_${pkg} is not set/" "$ROOT_DIR/.config"
+      fi
+    done
+    echo "    已更新 .config（原文件已备份为 .config.bak.*）。建议重新跑一次 'make defconfig' 确认依赖关系。"
+  else
+    echo "    未找到 .config，跳过自动关闭步骤，请手动执行 'make menuconfig' 关闭 geoview。"
+  fi
+else
+  echo "==> [3/3] 跳过 --disable-geoview（未指定该参数）。"
+fi
+
+echo ""
+echo "完成。接下来直接重新执行你的 make 命令即可，例如："
+echo "    make -j\$(nproc) V=s"
+echo ""
+echo "如果 CI 环境无法访问 go 官方下载源导致 GOTOOLCHAIN=auto 仍然失败，"
+echo "请改用：bash fix-geoview-go.sh --disable-geoview"
+
+
+
 # 为iStoreOS固件版本加上编译作者
 # author="xiaomeng9597"
 # sed -i "s/DISTRIB_DESCRIPTION.*/DISTRIB_DESCRIPTION='%D %V ${date_version} by ${author}'/g" package/base-files/files/etc/openwrt_release
