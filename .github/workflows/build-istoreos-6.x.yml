@@ -199,7 +199,7 @@ jobs:
 
         ⏱️ 编译时间: $(date +"%Y年%m月%d日%H时%M分")
 
-        🌐 管理地址: 192.168.100.1
+        🌐 管理地址: 192.168.8.1
 
         👤 用户名: root
 
@@ -217,7 +217,7 @@ jobs:
         files: ${{ env.FIRMWARE }}/*
 
     - name: 删除运行记录
-      uses: xiaomeng9597/delete-workflow-runs@main
+      uses: admin6750217/delete-workflow-runs@main
       with:
         retain_days: 20
         keep_minimum_runs: 15
