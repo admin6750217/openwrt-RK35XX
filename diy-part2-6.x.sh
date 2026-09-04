@@ -7,32 +7,28 @@
 # Blog: https://p3terx.com
 #===============================================
 
-# 修改uhttpd配置文件，启用nginx
-# sed -i "/.*uhttpd.*/d" .config
-# sed -i '/.*\/etc\/init.d.*/d' package/network/services/uhttpd/Makefile
-# sed -i '/.*.\/files\/uhttpd.init.*/d' package/network/services/uhttpd/Makefile
+# 修改 uhttpd 配置文件，启用 nginx 端口避让
 sed -i "s/:80/:81/g" package/network/services/uhttpd/files/uhttpd.config
 sed -i "s/:443/:4443/g" package/network/services/uhttpd/files/uhttpd.config
-cp -a $GITHUB_WORKSPACE/configfiles/etc/* package/base-files/files/etc/
-# ls package/base-files/files/etc/
 
+# 安全复制自定义文件（避免目录不存在时中断编译）
+if [ -d "$GITHUB_WORKSPACE/configfiles" ]; then
+    [ -d "$GITHUB_WORKSPACE/configfiles/etc" ] && cp -a $GITHUB_WORKSPACE/configfiles/etc/* package/base-files/files/etc/
+    if [ -f "$GITHUB_WORKSPACE/configfiles/coremark/coremark-arm64" ]; then
+        cp -f $GITHUB_WORKSPACE/configfiles/coremark/coremark-arm64 package/base-files/files/bin/coremark-arm64
+        cp -f $GITHUB_WORKSPACE/configfiles/coremark/coremark-arm64.sh package/base-files/files/bin/coremark.sh
+        chmod 755 package/base-files/files/bin/coremark-arm64
+        chmod 755 package/base-files/files/bin/coremark.sh
+    fi
+else
+    echo "⚠️ 警告：未找到 $GITHUB_WORKSPACE/configfiles 目录，跳过自定义配置文件复制"
+fi
 
 # 追加自定义内核配置项
 echo "CONFIG_PSI=y
 CONFIG_KPROBES=y" >> target/linux/rockchip/armv8/config-6.6
 
-
-# 集成CPU性能跑分脚本
-cp -f $GITHUB_WORKSPACE/configfiles/coremark/coremark-arm64 package/base-files/files/bin/coremark-arm64
-cp -f $GITHUB_WORKSPACE/configfiles/coremark/coremark-arm64.sh package/base-files/files/bin/coremark.sh
-chmod 755 package/base-files/files/bin/coremark-arm64
-chmod 755 package/base-files/files/bin/coremark.sh
-
-
-# 复制dts设备树文件到指定目录下
-# cp -a $GITHUB_WORKSPACE/configfiles/dts/rk3588/* target/linux/rockchip/dts/rk3588/
-
-# 删除feeds中的插件
+# 删除 feeds 中的重复/冲突插件
 rm -rf ./feeds/packages/net/{geoview,chinadns-ng,hysteria,mosdns,v2ray-geodata,lucky}
 rm -rf ./feeds/packages/net/{shadowsocks-libev,shadowsocks-rust,shadowsocksr-libev}
 rm -rf ./feeds/packages/net/{sing-box,v2ray-geodata,v2ray-plugin,xray-core,smartdns}
@@ -41,97 +37,44 @@ rm -rf ./feeds/luci/applications/{luci-app-passwall,luci-app-passwall2,luci-app-
 rm -rf ./feeds/luci/applications/{luci-app-lucky,luci-app-smartdns,luci-app-timecontrol,luci-app-mosdns}
 rm -rf ./feeds/luci/applications/{luci-app-nikki,luci-app-momo,luci-app-daed}
 
-# 克隆依赖插件
+# 克隆依赖插件到 package/pwpage
 git clone --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall-packages.git package/pwpage
-# git clone --depth 1 https://github.com/sbwml/packages_lang_golang -b 25.x feeds/packages/lang/golang
 
+# 创建自定义插件存放目录
+mkdir -p package/small
 
-# 克隆的源码放在small文件夹
-mkdir package/small
-pushd package/small
+# 克隆自定义插件（直接指定目标路径，避免 pushd/popd 导致目录错乱）
+git clone -b master --depth 1 https://github.com/eamonxg/luci-theme-aurora.git package/small/luci-theme-aurora
+git clone -b main --depth 1 https://github.com/sirpdboy/luci-app-timecontrol.git package/small/luci-app-timecontrol
+git clone -b master --depth 1 https://github.com/immortalwrt/homeproxy.git package/small/homeproxy
+git clone -b main --depth 1 https://github.com/gdy666/luci-app-lucky.git package/small/lucky
+git clone -b master --depth 1 https://github.com/pymumu/luci-app-smartdns.git package/small/luci-app-smartdns
+git clone -b master --depth 1 https://github.com/pymumu/smartdns.git package/small/smartdns
 
-# luci-theme-aurora
-git clone -b master --depth 1 https://github.com/eamonxg/luci-theme-aurora.git
+if [ -f "package/small/smartdns/package/openwrt/Makefile" ]; then
+    sed -i 's@include ../../lang/rust/rust-package.mk@include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk@g' package/small/smartdns/package/openwrt/Makefile
+fi
 
-# luci-app-nft-timecontrol
-git clone -b main --depth 1 https://github.com/sirpdboy/luci-app-timecontrol.git
-
-# adguardhome
-# git clone -b 2024.09.05 --depth 1 https://github.com/XiaoBinin/luci-app-adguardhome.git
-
-# homeproxy
-git clone -b master --depth 1 https://github.com/immortalwrt/homeproxy.git
-
-# lucky
-git clone -b main --depth 1 https://github.com/gdy666/luci-app-lucky.git
-
-# smartdns
-git clone -b master --depth 1 https://github.com/pymumu/luci-app-smartdns.git
-git clone -b master --depth 1 https://github.com/pymumu/smartdns.git
-sed -i 's@include ../../lang/rust/rust-package.mk@include $(TOPDIR)/feeds/packages/lang/rust/rust-package.mk@g' smartdns/package/openwrt/Makefile
-sed -n '33p' smartdns/package/openwrt/Makefile
-
-# ssrp
-# git clone -b master --depth 1 https://github.com/fw876/helloworld.git
-
-# VIKINGYFY/packages
-git clone -b main --depth 1 https://github.com/VIKINGYFY/packages.git
-
-# passwall
-git clone -b main --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall.git
-
-# passwall2
-git clone -b main --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall2.git
-
-# mosdns
-git clone -b v5 --depth 1 https://github.com/sbwml/luci-app-mosdns.git
-
-# luci-app-netspeedtest
-git clone -b master --depth 1 https://github.com/sirpdboy/luci-app-netspeedtest.git
-
-# openclash
-git clone -b master --depth 1 https://github.com/vernesong/OpenClash.git
-
-# OpenWrt-nikki
-git clone -b main --depth 1 https://github.com/nikkinikki-org/OpenWrt-nikki.git
-
-# OpenWrt-momo
-git clone -b main --depth 1 https://github.com/nikkinikki-org/OpenWrt-momo.git
-
-# daed
-git clone -b master --depth 1 https://github.com/QiuSimons/luci-app-daed.git
-
-#modem
-# git clone -b main --depth 1 https://github.com/FUjr/modem_feeds.git
-
-popd
+git clone -b main --depth 1 https://github.com/VIKINGYFY/packages.git package/small/vikingyfy-packages
+git clone -b main --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall.git package/small/openwrt-passwall
+git clone -b main --depth 1 https://github.com/Openwrt-Passwall/openwrt-passwall2.git package/small/openwrt-passwall2
+git clone -b v5 --depth 1 https://github.com/sbwml/luci-app-mosdns.git package/small/luci-app-mosdns
+git clone -b master --depth 1 https://github.com/sirpdboy/luci-app-netspeedtest.git package/small/luci-app-netspeedtest
+git clone -b master --depth 1 https://github.com/vernesong/OpenClash.git package/small/OpenClash
+git clone -b main --depth 1 https://github.com/nikkinikki-org/OpenWrt-nikki.git package/small/OpenWrt-nikki
+git clone -b main --depth 1 https://github.com/nikkinikki-org/OpenWrt-momo.git package/small/OpenWrt-momo
+git clone -b master --depth 1 https://github.com/QiuSimons/luci-app-daed.git package/small/luci-app-daed
 
 echo "packages executed successfully!"
-
-
-
-
 
 # iStoreOS-settings
 git clone --depth=1 -b main https://github.com/xiaomeng9597/istoreos-settings package/default-settings
 
-
 # 定时限速插件
 git clone --depth=1 https://github.com/sirpdboy/luci-app-eqosplus package/luci-app-eqosplus
 
-
 # ============================================================
 # 修复 geoview 等 go 包因宿主 go 工具链版本过低导致的编译失败
-#   go: ../../go.mod requires go >= 1.25.0 (running go 1.23.12; GOTOOLCHAIN=local)
-#
-# 主方案：直接把 feeds/packages/lang/golang 换成 kenzok8/golang 的 1.25
-# 分支（他自己维护、CI 自动跟版本更新 PKG_HASH），从根上把宿主 go 工具链
-# 升到 1.25，不依赖运行时联网自动下载。
-#
-# 放在 diy-part2 末尾执行，此时两次 feeds update/install 都已跑完，
-# 换完 golang feed 目录后不会再触发 feeds update 把它冲掉，
-# 且路径不变（feeds/packages/lang/golang），之前 feeds install 建立的
-# package/feeds/packages/lang/golang 符号链接仍然有效，无需重新 install。
 # ============================================================
 
 echo
@@ -146,8 +89,6 @@ else
     echo "⚠️ kenzok8/golang 1.25 分支克隆失败，回退到 GOTOOLCHAIN=auto 兜底方案"
 fi
 
-# 兜底：万一上面替换失败，或者以后又有别的包要求更新的 go 版本，
-# 靠 GOTOOLCHAIN=auto 让 go 运行时自动下载对应工具链（需要联网）。
 echo "==> 搜索仍然硬编码 GOTOOLCHAIN=local 的位置作为兜底..."
 GOTOOLCHAIN_HITS=$(grep -rlE 'GOTOOLCHAIN[[:space:]]*[:?]?=[[:space:]]*local' \
   --include="*.mk" --include="Makefile" \
@@ -163,8 +104,6 @@ else
     echo "    未找到硬编码位置，继续用环境变量兜底。"
 fi
 
-# make defconfig / make download / make compile 是各自独立的 workflow step，
-# 必须写入 GITHUB_ENV 才能让 GOTOOLCHAIN=auto 传递到后面的编译 step。
 if [ -n "${GITHUB_ENV:-}" ]; then
     {
         echo "GOTOOLCHAIN=auto"
