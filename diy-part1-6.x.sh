@@ -64,8 +64,6 @@ echo "wifi 自动启用脚本已生成并赋权"
 # ==== 追加内容结束 ====
 
 
-
-
 # 修复系统kernel内核md5校验码不正确的问题
 # https://downloads.openwrt.org/releases/24.10.5/targets/rockchip/armv8/kmods/
 # https://archive.openwrt.org/releases/24.10.5/targets/rockchip/armv8/kmods/
