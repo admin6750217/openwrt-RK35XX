@@ -124,20 +124,31 @@ git clone --depth=1 https://github.com/sirpdboy/luci-app-eqosplus package/luci-a
 # 修复 geoview 等 go 包因宿主 go 工具链版本过低导致的编译失败
 #   go: ../../go.mod requires go >= 1.25.0 (running go 1.23.12; GOTOOLCHAIN=local)
 #
-# 放在 diy-part2 末尾执行，此时两次 feeds update/install 都已跑完，
-# 不会再被 feeds update 覆盖掉这里打的补丁。
+# 主方案：直接把 feeds/packages/lang/golang 换成 kenzok8/golang 的 1.25
+# 分支（他自己维护、CI 自动跟版本更新 PKG_HASH），从根上把宿主 go 工具链
+# 升到 1.25，不依赖运行时联网自动下载。
 #
-# 如果不想联网下载新 go 工具链（比如担心网络不稳定），
-# 可以在 workflow env 里加一行 DISABLE_GEOVIEW: "true" 来跳过 geoview，
-# 而不是修复它。
+# 放在 diy-part2 末尾执行，此时两次 feeds update/install 都已跑完，
+# 换完 golang feed 目录后不会再触发 feeds update 把它冲掉，
+# 且路径不变（feeds/packages/lang/golang），之前 feeds install 建立的
+# package/feeds/packages/lang/golang 符号链接仍然有效，无需重新 install。
 # ============================================================
 
 echo
 echo "========================================"
-echo "修复 geoview go 版本冲突..."
+echo "升级 golang feed 到 kenzok8/golang (1.25 分支)..."
 echo "========================================"
 
-echo "==> 搜索硬编码的 GOTOOLCHAIN=local ..."
+rm -rf feeds/packages/lang/golang
+if git clone --depth=1 -b 1.25 https://github.com/kenzok8/golang feeds/packages/lang/golang; then
+    echo "✅ golang feed 已替换为 kenzok8/golang 1.25 分支"
+else
+    echo "⚠️ kenzok8/golang 1.25 分支克隆失败，回退到 GOTOOLCHAIN=auto 兜底方案"
+fi
+
+# 兜底：万一上面替换失败，或者以后又有别的包要求更新的 go 版本，
+# 靠 GOTOOLCHAIN=auto 让 go 运行时自动下载对应工具链（需要联网）。
+echo "==> 搜索仍然硬编码 GOTOOLCHAIN=local 的位置作为兜底..."
 GOTOOLCHAIN_HITS=$(grep -rlE 'GOTOOLCHAIN[[:space:]]*[:?]?=[[:space:]]*local' \
   --include="*.mk" --include="Makefile" \
   feeds package include tools toolchain 2>/dev/null || true)
@@ -160,7 +171,7 @@ if [ -n "${GITHUB_ENV:-}" ]; then
         echo "GOFLAGS=-mod=mod"
         echo "GOPROXY=https://goproxy.cn,direct"
     } >> "$GITHUB_ENV"
-    echo "    已写入 GOTOOLCHAIN=auto / GOPROXY 镜像加速到 \$GITHUB_ENV"
+    echo "    已写入 GOTOOLCHAIN=auto / GOPROXY 镜像加速到 \$GITHUB_ENV（兜底用）"
 fi
 
 if [ "${DISABLE_GEOVIEW:-false}" = "true" ]; then
