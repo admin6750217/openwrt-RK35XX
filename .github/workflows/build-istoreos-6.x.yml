@@ -13,12 +13,10 @@ on:
 
 env:
   REPO_URL: https://github.com/istoreos/istoreos
-  # REPO_BRANCH: main
   FEEDS_CONF: feeds.conf
-  CONFIG_FILE: .config
+  CONFIG_FILE: config.txt
   DIY_P1_SH: diy-part1-6.x.sh
   DIY_P2_SH: diy-part2-6.x.sh
-  UPLOAD_BIN_DIR: true
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
@@ -30,9 +28,7 @@ jobs:
     strategy:
       matrix:
         REPO_BRANCH:
-          # - main
           - istoreos-24.10
-          # - istoreos-23.05
         ARCHITECTURE:
           - armv8
         os:
@@ -111,10 +107,11 @@ jobs:
       env:
         FEEDS_CONF_PATH: ${{ matrix.ARCHITECTURE }}/${{ env.FEEDS_CONF }}
       run: |
-        [ -e $FEEDS_CONF_PATH ] && mv $FEEDS_CONF_PATH openwrt/$FEEDS_CONF
-        chmod +x $DIY_P1_SH
+        test -f "$GITHUB_WORKSPACE/$FEEDS_CONF_PATH"
+        mv "$GITHUB_WORKSPACE/$FEEDS_CONF_PATH" "$GITHUB_WORKSPACE/openwrt/$FEEDS_CONF"
+        chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        "$GITHUB_WORKSPACE/$DIY_P1_SH"
 
     - name: 更新 feeds
       run: cd openwrt && ./scripts/feeds update -a
@@ -126,18 +123,14 @@ jobs:
       env:
         CONFIG_FILE_PATH: ${{ matrix.ARCHITECTURE }}/${{ env.CONFIG_FILE }}
       run: |
-        [ -e files ] && mv files openwrt/files
-        [ -e $CONFIG_FILE_PATH ] && mv $CONFIG_FILE_PATH openwrt/$CONFIG_FILE
-        chmod +x $DIY_P2_SH
+        if [ -d "$GITHUB_WORKSPACE/files" ]; then
+          mv "$GITHUB_WORKSPACE/files" "$GITHUB_WORKSPACE/openwrt/files"
+        fi
+        test -f "$GITHUB_WORKSPACE/$CONFIG_FILE_PATH"
+        mv "$GITHUB_WORKSPACE/$CONFIG_FILE_PATH" "$GITHUB_WORKSPACE/openwrt/$CONFIG_FILE"
+        chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
         cd openwrt
-        $GITHUB_WORKSPACE/$DIY_P2_SH
-
-    # - name: SSH 连接到 Actions
-      # uses: P3TERX/ssh2actions@main
-      # if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
-      # env:
-        # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
     - name: 下载软件包
       id: package
@@ -167,28 +160,23 @@ jobs:
       if: (!cancelled())
       run: df -hT
 
-    - name: 上传 bin 文件夹
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.FILE_DATE }}
-        path: openwrt/bin
-
     - name: 整理固件文件
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         cd openwrt/bin/targets/*/*
         rm -rf packages
+        find . -maxdepth 1 -type f ! -name '*.img.gz' -delete
+        test -n "$(find . -maxdepth 1 -type f -name '*.img.gz' -print -quit)"
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> ${GITHUB_OUTPUT}
 
-    - name: 上传固件目录
+    - name: 上传压缩 IMG 固件
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
+        path: ${{ env.FIRMWARE }}/*.img.gz
 
     - name: 生成发布标签
       id: tag
@@ -218,9 +206,10 @@ jobs:
       uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       with:
+        repository: ${{ github.repository }}
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+        files: ${{ env.FIRMWARE }}/*.img.gz
 
     - name: 删除运行记录
       uses: xiaomeng9597/delete-workflow-runs@main

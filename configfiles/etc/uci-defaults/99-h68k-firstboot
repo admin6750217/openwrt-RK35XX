@@ -1,0 +1,59 @@
+#!/bin/sh
+
+[ "$(board_name)" = "hinlink,opc-h68k" ] || exit 0
+
+if [ ! -s /etc/config/wireless ]; then
+	wifi config >/dev/null 2>&1 || true
+fi
+
+if [ -s /etc/config/wireless ]; then
+	for section in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)\.type=wifi-device$/\1/p'); do
+		uci -q set wireless.${section}.disabled='0'
+		uci -q set wireless.${section}.country='CN'
+	done
+	for section in $(uci -q show wireless | sed -n 's/^wireless\.\([^.]*\)\.mode=\(ap\|mesh\|sta\|adhoc\)$/\1/p'); do
+		uci -q set wireless.${section}.disabled='0'
+	done
+	uci -q commit wireless
+	wifi up >/dev/null 2>&1 || wifi reload >/dev/null 2>&1 || true
+fi
+
+if [ ! -s /etc/config/fstab ]; then
+	block detect > /etc/config/fstab 2>/dev/null || true
+fi
+
+if [ -s /etc/config/fstab ]; then
+	uci -q batch <<'EOF'
+set fstab.@global[0].anon_mount='1'
+set fstab.@global[0].auto_mount='1'
+set fstab.@global[0].auto_swap='1'
+commit fstab
+EOF
+	/etc/init.d/fstab enable >/dev/null 2>&1 || true
+	/etc/init.d/fstab restart >/dev/null 2>&1 || true
+fi
+
+sysctl -p /etc/sysctl.d/99-h68k.conf >/dev/null 2>&1 || true
+
+if [ -x /etc/init.d/samba4 ]; then
+	uci -q get samba4.@samba[0] >/dev/null 2>&1 || uci set samba4.@samba[0]=samba
+	uci -q set samba4.@samba[0].name='H68K'
+	uci -q set samba4.@samba[0].workgroup='WORKGROUP'
+	uci -q set samba4.@samba[0].description='H68K Samba Server'
+	uci -q set samba4.@samba[0].homes='0'
+	uci -q set samba4.@samba[0].interface='lan'
+
+	share=$(uci -q show samba4 | sed -n 's/^samba4\.\([^=]*\)=sambashare$/\1/p' | head -n 1)
+	[ -n "$share" ] || share=$(uci add samba4 sambashare)
+	uci -q set samba4.${share}.name='Storage'
+	uci -q set samba4.${share}.path='/mnt'
+	uci -q set samba4.${share}.read_only='no'
+	uci -q set samba4.${share}.guest_ok='yes'
+	uci -q set samba4.${share}.create_mask='0666'
+	uci -q set samba4.${share}.dir_mask='0777'
+	uci -q commit samba4
+	/etc/init.d/samba4 enable >/dev/null 2>&1 || true
+	/etc/init.d/samba4 restart >/dev/null 2>&1 || true
+fi
+
+exit 0
