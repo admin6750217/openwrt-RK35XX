@@ -34,9 +34,6 @@ jobs:
 
     steps:
 
-    # ============================================================
-    # 1. 扩大 GitHub Actions 编译磁盘空间
-    # ============================================================
     - name: 合并磁盘
       uses: easimon/maximize-build-space@master
       with:
@@ -44,45 +41,27 @@ jobs:
         temp-reserve-mb: 100
         root-reserve-mb: 1024
 
-    # ============================================================
-    # 2. 获取当前仓库文件
-    #    包括：
-    #    configfiles/config_data-6.x.txt
-    #    diy-part1-6.x.sh
-    #    diy-part2-6.x.sh
-    #    depends/
-    # ============================================================
     - name: 准备完成
       uses: actions/checkout@main
 
-    # ============================================================
-    # 3. 每次编译前同步最新官方 ARMv8 配置
-    #
-    #    来源：
-    #    feeds.conf
-    #    config.buildinfo
-    #
-    #    然后把：
-    #    configfiles/config_data-6.x.txt
-    #
-    #    覆盖到官方 .config 中
-    # ============================================================
     - name: 编译前同步官方 ARMv8 配置
       run: |
         set -e
 
-        echo "================================================"
-        echo "开始同步 iStoreOS ARMv8 官方编译配置"
-        echo "================================================"
-
         mkdir -p ./armv8
 
-        echo "下载 feeds.conf..."
+        echo "========================================"
+        echo "下载官方 feeds.conf"
+        echo "========================================"
+
         wget --no-check-certificate --no-cache \
           -O ./armv8/feeds.conf \
           https://fw0.koolcenter.com/iStoreOS/easepi-r1/feeds.conf
 
-        echo "下载 config.buildinfo..."
+        echo "========================================"
+        echo "下载官方 config.buildinfo"
+        echo "========================================"
+
         wget --no-check-certificate --no-cache \
           -O ./armv8/.config \
           https://fw0.koolcenter.com/iStoreOS/easepi-r1/config.buildinfo
@@ -97,10 +76,6 @@ jobs:
           exit 1
         fi
 
-        echo "================================================"
-        echo "应用 configfiles/config_data-6.x.txt"
-        echo "================================================"
-
         if [ ! -s "./configfiles/config_data-6.x.txt" ]; then
           echo "错误：configfiles/config_data-6.x.txt 不存在或为空"
           exit 1
@@ -108,233 +83,180 @@ jobs:
 
         cp ./armv8/.config ./armv8/.config.official
 
-        # ========================================================
-        # 使用 Python 按 CONFIG_xxx 符号进行合并
-        #
-        # 官方配置：
-        # CONFIG_xxx=y
-        #
-        # 自定义配置：
-        # # CONFIG_xxx is not set
-        #
-        # 最后出现的配置优先，因此 config_data-6.x.txt
-        # 可以真正覆盖官方配置。
-        # ========================================================
         python3 <<'PY'
-        from pathlib import Path
-        import re
+from pathlib import Path
+import re
 
-        official_file = Path("./armv8/.config")
-        custom_file = Path("./configfiles/config_data-6.x.txt")
+official_file = Path("./armv8/.config")
+custom_file = Path("./configfiles/config_data-6.x.txt")
 
-        official_lines = official_file.read_text(
-            encoding="utf-8",
-            errors="ignore"
-        ).splitlines()
+official_lines = official_file.read_text(
+    encoding="utf-8",
+    errors="ignore"
+).splitlines()
 
-        custom_lines = custom_file.read_text(
-            encoding="utf-8",
-            errors="ignore"
-        ).splitlines()
+custom_lines = custom_file.read_text(
+    encoding="utf-8",
+    errors="ignore"
+).splitlines()
 
-        config = {}
-        order = []
+config = {}
+order = []
 
-        # CONFIG_xxx=value
-        enabled_pattern = re.compile(
-            r"^(CONFIG_[A-Za-z0-9_]+)=(.*)$"
-        )
+enabled_pattern = re.compile(
+    r"^(CONFIG_[A-Za-z0-9_]+)=(.*)$"
+)
 
-        # # CONFIG_xxx is not set
-        disabled_pattern = re.compile(
-            r"^#\s*(CONFIG_[A-Za-z0-9_]+)\s+is not set$"
-        )
+disabled_pattern = re.compile(
+    r"^#\s*(CONFIG_[A-Za-z0-9_]+)\s+is not set$"
+)
 
-        def process(lines):
-            for raw in lines:
-                line = raw.strip()
+def process(lines):
+    for raw in lines:
+        line = raw.strip()
 
-                if not line:
-                    continue
+        if not line:
+            continue
 
-                # 保留 CONFIG_xxx=y/m/n/...
-                m = enabled_pattern.match(line)
-                if m:
-                    symbol = m.group(1)
+        match = enabled_pattern.match(line)
 
-                    if symbol not in config:
-                        order.append(symbol)
+        if match:
+            symbol = match.group(1)
 
-                    config[symbol] = line
-                    continue
+            if symbol not in config:
+                order.append(symbol)
 
-                # 保留 # CONFIG_xxx is not set
-                m = disabled_pattern.match(line)
-                if m:
-                    symbol = m.group(1)
+            config[symbol] = line
+            continue
 
-                    if symbol not in config:
-                        order.append(symbol)
+        match = disabled_pattern.match(line)
 
-                    config[symbol] = line
-                    continue
+        if match:
+            symbol = match.group(1)
 
-                # 其他普通注释、空白等不写入 .config
-                continue
+            if symbol not in config:
+                order.append(symbol)
 
-        # 先加载官方配置
-        process(official_lines)
+            config[symbol] = line
 
-        # 再加载自定义配置
-        # 自定义配置优先
-        process(custom_lines)
+process(official_lines)
+process(custom_lines)
 
-        output = "\n".join(config[symbol] for symbol in order) + "\n"
+output = "\n".join(
+    config[symbol]
+    for symbol in order
+) + "\n"
 
-        official_file.write_text(
-            output,
-            encoding="utf-8"
-        )
+official_file.write_text(
+    output,
+    encoding="utf-8"
+)
+PY
 
-        print("配置合并完成")
-        print(f"官方配置项目：{len(official_lines)} 行")
-        print(f"自定义配置项目：{len(custom_lines)} 行")
-        print(f"最终 CONFIG 项目：{len(config)} 项")
-        PY
+        echo "========================================"
+        echo "合并后的 Rockchip DEVICE"
+        echo "========================================"
 
-        echo "================================================"
-        echo "检查最终 ARMv8 配置"
-        echo "================================================"
+        grep \
+          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+          ./armv8/.config \
+          || true
 
-        grep -E \
-          'CONFIG_TARGET_rockchip|CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk|CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_bdy_g98-nas|CONFIG_ALL_KMODS|CONFIG_PACKAGE_kmod-mt7921|CONFIG_PACKAGE_kmod-rockchip-hdmirx' \
-          ./armv8/.config || true
-
-        echo "================================================"
-        echo "配置同步完成"
-        echo "================================================"
-
-    # ============================================================
-    # 4. 创建工作目录
-    # ============================================================
     - name: 创建工作目录
       run: |
-        mkdir -p ${GITHUB_WORKSPACE}/workdir
-        chmod 755 ${GITHUB_WORKSPACE}/workdir
-        echo "WORKDIR_PATH=$PWD" >> $GITHUB_ENV
+        set -e
 
-    # ============================================================
-    # 5. 检查服务器配置
-    # ============================================================
+        mkdir -p "${GITHUB_WORKSPACE}/workdir"
+        chmod 755 "${GITHUB_WORKSPACE}/workdir"
+
+        echo "WORKDIR_PATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+
     - name: 检查服务器配置
       run: |
-        echo "若分配的服务器性能不足，务必及时取消，重新运行！"
+        echo "========================================"
+        echo "CPU"
+        echo "========================================"
 
-        echo -e "------------------------------- CPU信息 -------------------------------\n"
+        nproc
 
-        echo "CPU物理数量:$(cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l)"
+        echo "========================================"
+        echo "内存"
+        echo "========================================"
 
-        echo -e "CPU核心及版本信息: $(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
+        free -h
 
-        echo -e "------------------------------- 内存信息 -------------------------------\n"
+        echo "========================================"
+        echo "磁盘"
+        echo "========================================"
 
-        echo "已安装内存详细信息: "
+        df -hT
 
-        sudo lshw -short -C memory | grep GiB || true
-
-        echo -e "\n"
-
-        echo -e "------------------------------- 磁盘信息 -------------------------------\n"
-
-        echo -e "磁盘数量: $(ls /dev/sd* 2>/dev/null | grep -v [1-9] | wc -l) \n"
-
-        echo "------------------------------- 磁盘详情 -------------------------------"
-
-        df -Th
-
-    # ============================================================
-    # 6. 初始化编译环境
-    # ============================================================
     - name: 初始化编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        echo "------------------------------- 更新并安装依赖 -------------------------------"
+        set -e
 
-        sudo rm -rf \
-          /etc/apt/sources.list.d/* \
-          /usr/share/dotnet \
-          /etc/mysql \
-          /etc/php \
-          /usr/local/lib/android \
-          /opt/ghc
+        sudo apt-get update
 
-        sudo -E apt-get -qq update
+        sudo apt-get install -y \
+          build-essential \
+          clang \
+          flex \
+          bison \
+          g++ \
+          gawk \
+          gcc-multilib \
+          g++-multilib \
+          gettext \
+          git \
+          libncurses5-dev \
+          libssl-dev \
+          python3 \
+          python3-distutils \
+          python3-pip \
+          rsync \
+          unzip \
+          zlib1g-dev \
+          file \
+          wget \
+          curl \
+          jq \
+          bc \
+          swig \
+          time
 
-        sudo -E apt-get -qq install \
-          $(cat $GITHUB_WORKSPACE/depends/${{ matrix.os }})
+        sudo timedatectl set-timezone "$TZ" || true
 
-        wget https://bootstrap.pypa.io/pip/3.6/get-pip.py
+        python3 -m pip install --upgrade pip || true
+        python3 -m pip install pyelftools || true
 
-        sudo python3 get-pip.py
+        gcc --version
+        python3 --version
+        make --version
 
-        sudo rm -rf get-pip.py
-
-        sudo pip install pyelftools
-
-        echo "------------------------------- 清理 Docker 镜像和软件 -------------------------------"
-
-        [ -n "$(docker images -q)" ] && docker rmi $(docker images -q) || true
-
-        docker image prune -a -f
-
-        sudo -E apt-get -y purge \
-          azure-cli \
-          ghc* \
-          zulu* \
-          hhvm \
-          llvm* \
-          firefox \
-          google* \
-          dotnet* \
-          powershell \
-          openjdk* \
-          adoptopenjdk* \
-          mysql* \
-          php* \
-          mongodb* \
-          moby* \
-          snapd* \
-          android* || true
-
-        sudo -E apt-get -qq autoremove --purge
-
-        sudo -E apt-get -qq clean
-
-        echo "------------------------------- 设置时区 -------------------------------"
-
-        sudo timedatectl set-timezone "$TZ"
-
-    # ============================================================
-    # 7. 克隆 iStoreOS 源码
-    # ============================================================
     - name: 克隆源码
       working-directory: ${{ env.WORKDIR_PATH }}/workdir
       run: |
-        df -hT $PWD
+        set -e
+
+        df -hT "$PWD"
 
         git clone \
-          $REPO_URL \
-          -b ${{ matrix.REPO_BRANCH }} \
+          --depth=1 \
+          "$REPO_URL" \
+          -b "${{ matrix.REPO_BRANCH }}" \
           openwrt
 
         ln -sf \
-          ${{ env.WORKDIR_PATH }}/workdir/openwrt \
-          $GITHUB_WORKSPACE/openwrt
+          "${{ env.WORKDIR_PATH }}/workdir/openwrt" \
+          "$GITHUB_WORKSPACE/openwrt"
 
-    # ============================================================
-    # 8. 缓存编译
-    # ============================================================
+        cd openwrt
+
+        git branch
+        git log -1 --oneline
+
     - name: 缓存构建动作
       uses: klever1988/cachewrtbuild@main
       with:
@@ -342,185 +264,311 @@ jobs:
         mixkey: ${{ matrix.os }}-${{ matrix.ARCHITECTURE }}-${{ matrix.REPO_BRANCH }}
         prefix: ${{ github.workspace }}/openwrt
 
-    # ============================================================
-    # 9. 加载同步下来的 feeds.conf
-    #
-    #    这里不再从仓库 armv8/ 读取旧配置，
-    #    而是使用本次编译刚刚下载的最新配置。
-    # ============================================================
     - name: 加载自定义 feeds
       run: |
         set -e
 
-        if [ -f "./armv8/feeds.conf" ]; then
-          cp ./armv8/feeds.conf ./openwrt/feeds.conf
-        else
+        if [ ! -f "./armv8/feeds.conf" ]; then
           echo "错误：armv8/feeds.conf 不存在"
           exit 1
         fi
 
-        chmod +x $DIY_P1_SH
+        cp \
+          ./armv8/feeds.conf \
+          ./openwrt/feeds.conf
+
+        chmod +x "$DIY_P1_SH"
 
         cd openwrt
 
-        $GITHUB_WORKSPACE/$DIY_P1_SH
+        "$GITHUB_WORKSPACE/$DIY_P1_SH"
 
-    # ============================================================
-    # 10. 更新 feeds
-    # ============================================================
     - name: 更新 feeds
       run: |
+        set -e
+
         cd openwrt
+
         ./scripts/feeds update -a
 
-    # ============================================================
-    # 11. 安装 feeds
-    # ============================================================
     - name: 安装 feeds
       run: |
+        set -e
+
         cd openwrt
+
         ./scripts/feeds install -a
 
-    # ============================================================
-    # 12. 加载最终 .config
-    #
-    #     这里使用刚才同步并合并后的 ARMv8 配置。
-    # ============================================================
     - name: 加载自定义配置
       run: |
         set -e
 
-        [ -e files ] && mv files openwrt/files
+        echo "========================================"
+        echo "加载最终配置"
+        echo "========================================"
 
-        if [ -f "./armv8/.config" ]; then
-          cp ./armv8/.config ./openwrt/.config
-        else
+        if [ -e files ]; then
+          mv files openwrt/files
+        fi
+
+        if [ ! -f "./armv8/.config" ]; then
           echo "错误：armv8/.config 不存在"
           exit 1
         fi
 
-        chmod +x $DIY_P2_SH
+        cp \
+          ./armv8/.config \
+          ./openwrt/.config
+
+        chmod +x "$DIY_P2_SH"
 
         cd openwrt
 
-        $GITHUB_WORKSPACE/$DIY_P2_SH
+        "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
-    # ============================================================
-    # 13. 最终确认只编译 Hinlink OPC-H6XK
-    # ============================================================
-    - name: 检查目标配置
+        echo "========================================"
+        echo "强制锁定 Hinlink OPC-H6XK"
+        echo "========================================"
+
+        sed -i \
+          '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
+          .config
+
+        sed -i \
+          '/^# CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.* is not set$/d' \
+          .config
+
+        sed -i \
+          '/^CONFIG_TARGET_rockchip=/d' \
+          .config
+
+        sed -i \
+          '/^CONFIG_TARGET_rockchip_armv8=/d' \
+          .config
+
+        sed -i \
+          '/^CONFIG_TARGET_MULTI_PROFILE=/d' \
+          .config
+
+        echo 'CONFIG_TARGET_rockchip=y' >> .config
+        echo 'CONFIG_TARGET_rockchip_armv8=y' >> .config
+        echo 'CONFIG_TARGET_MULTI_PROFILE=y' >> .config
+
+        echo 'CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y' >> .config
+
+        echo "========================================"
+        echo "强制锁定后的 DEVICE"
+        echo "========================================"
+
+        grep \
+          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+          .config
+
+    - name: 校验只编译 Hinlink OPC-H6XK
       run: |
+        set -e
+
         cd openwrt
 
-        echo "================================================"
-        echo "当前目标配置"
-        echo "================================================"
+        EXPECTED='CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y'
 
-        grep -E \
-          'CONFIG_TARGET_rockchip|CONFIG_TARGET_MULTI_PROFILE|CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk|CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_bdy_g98-nas' \
-          .config || true
+        echo "========================================"
+        echo "当前 Rockchip DEVICE"
+        echo "========================================"
 
-        echo "================================================"
-        echo "检查 H6XK"
-        echo "================================================"
+        grep \
+          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+          .config \
+          || true
 
-        if grep -q '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y$' .config; then
-          echo "H6XK 已启用"
-        else
-          echo "错误：H6XK 没有启用"
+        DEVICE_COUNT=$(grep \
+          -c \
+          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+          .config || true)
+
+        if [ "$DEVICE_COUNT" -ne 1 ]; then
+          echo "错误：发现 $DEVICE_COUNT 个 Rockchip ARMv8 DEVICE"
           exit 1
         fi
 
-        echo "================================================"
-        echo "检查 G98"
-        echo "================================================"
-
-        if grep -q '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_bdy_g98-nas=y$' .config; then
-          echo "错误：G98 被启用，停止编译"
+        if ! grep -qx "$EXPECTED" .config; then
+          echo "错误：唯一 DEVICE 不是 Hinlink OPC-H6XK"
           exit 1
-        else
-          echo "G98 未启用"
         fi
 
-        echo "================================================"
-        echo "检查 HDMI-RX"
-        echo "================================================"
+        echo "========================================"
+        echo "✓ DEVICE 校验通过"
+        echo "✓ 只允许 Hinlink OPC-H6XK"
+        echo "========================================"
 
-        grep -E \
-          'CONFIG_PACKAGE_kmod-rockchip-hdmirx|CONFIG_PACKAGE_kmod-video-dma-contig' \
-          .config || true
-
-    # ============================================================
-    # 14. 下载软件包
-    # ============================================================
-    - name: 下载软件包
-      id: package
+    - name: 生成最终配置
+      id: defconfig
       run: |
+        set -e
+
         cd openwrt
+
+        echo "========================================"
+        echo "执行 make defconfig"
+        echo "========================================"
 
         make defconfig
 
-        echo "================================================"
-        echo "make defconfig 完成后的目标配置"
-        echo "================================================"
+        echo "========================================"
+        echo "defconfig 后 Rockchip DEVICE"
+        echo "========================================"
 
-        grep -E \
-          'CONFIG_TARGET_rockchip|CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk|CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_bdy_g98-nas' \
-          .config || true
+        grep \
+          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+          .config \
+          || true
+
+    - name: defconfig 后再次校验 H6XK
+      run: |
+        set -e
+
+        cd openwrt
+
+        EXPECTED='CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y'
+
+        DEVICE_COUNT=$(grep \
+          -c \
+          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+          .config || true)
+
+        echo "========================================"
+        echo "defconfig 后 DEVICE 数量：$DEVICE_COUNT"
+        echo "========================================"
+
+        grep \
+          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+          .config \
+          || true
+
+        if [ "$DEVICE_COUNT" -ne 1 ]; then
+          echo "错误：defconfig 后存在多个 Rockchip DEVICE"
+          echo "重新清理其他 DEVICE"
+
+          sed -i \
+            '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
+            .config
+
+          sed -i \
+            '/^# CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.* is not set$/d' \
+            .config
+
+          echo "$EXPECTED" >> .config
+
+          make defconfig
+
+          DEVICE_COUNT=$(grep \
+            -c \
+            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+            .config || true)
+        fi
+
+        if [ "$DEVICE_COUNT" -ne 1 ]; then
+          echo "错误：最终仍存在多个 Rockchip DEVICE"
+          grep \
+            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+            .config \
+            || true
+          exit 1
+        fi
+
+        if ! grep -qx "$EXPECTED" .config; then
+          echo "错误：最终 DEVICE 不是 H6XK"
+          grep \
+            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+            .config \
+            || true
+          exit 1
+        fi
+
+        echo "========================================"
+        echo "✓ 最终配置确认"
+        echo "========================================"
+
+        echo "CONFIG_TARGET_rockchip=y"
+        echo "CONFIG_TARGET_rockchip_armv8=y"
+        echo "CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y"
+
+        echo "========================================"
+
+    - name: 下载软件包
+      id: package
+      run: |
+        set -e
+
+        cd openwrt
 
         make download -j8
 
-        find dl -size -1024c -exec ls -l {} \;
+        find dl \
+          -size -1024c \
+          -exec ls -l {} \;
 
-        find dl -size -1024c -exec rm -f {} \;
+        find dl \
+          -size -1024c \
+          -exec rm -f {} \;
 
-    # ============================================================
-    # 15. 编译固件
-    # ============================================================
     - name: 编译固件
       id: compile
       run: |
+        set -e
+
         cd openwrt
 
-        echo -e "$(nproc) thread compile"
+        echo "========================================"
+        echo "开始编译 Hinlink OPC-H6XK"
+        echo "========================================"
 
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "CPU线程：$(nproc)"
 
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        make -j$(nproc) || \
+        make -j1 || \
+        make -j1 V=s
 
-        echo "status=success" >> ${GITHUB_OUTPUT}
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" \
+          >> "$GITHUB_ENV"
 
-    # ============================================================
-    # 16. 查找 KO 文件
-    # ============================================================
+        echo "status=success" \
+          >> "$GITHUB_OUTPUT"
+
+        echo "========================================"
+        echo "✓ Hinlink OPC-H6XK 编译完成"
+        echo "========================================"
+
     - name: 查找ko文件
+      if: steps.compile.outputs.status == 'success'
       run: |
         cd openwrt
 
-        echo "================================================"
-        echo "全部 KO 文件"
-        echo "================================================"
+        echo "========================================"
+        echo "KO 文件"
+        echo "========================================"
 
-        find . -type f -name "*.ko"
+        find . \
+          -type f \
+          -name "*.ko" \
+          | sort
 
-        echo "================================================"
+        echo "========================================"
         echo "Rockchip 网络驱动 KO"
-        echo "================================================"
+        echo "========================================"
 
-        find build_dir/target-*/linux-*/linux-*/drivers/net/ \
-          -name "*.ko" 2>/dev/null || true
+        find \
+          build_dir/target-*/linux-*/linux-*/drivers/net/ \
+          -name "*.ko" \
+          2>/dev/null \
+          | sort \
+          || true
 
-    # ============================================================
-    # 17. 检查磁盘空间
-    # ============================================================
     - name: 检查磁盘空间
       if: (!cancelled())
       run: |
         df -hT
 
-    # ============================================================
-    # 18. 上传 bin 文件夹
-    # ============================================================
     - name: 上传 bin 文件夹
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
@@ -528,9 +576,6 @@ jobs:
         name: OpenWrt_bin${{ env.FILE_DATE }}
         path: openwrt/bin
 
-    # ============================================================
-    # 19. 整理固件文件
-    # ============================================================
     - name: 整理固件文件
       id: organize
       if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
@@ -541,13 +586,21 @@ jobs:
 
         rm -rf packages
 
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "========================================"
+        echo "固件文件"
+        echo "========================================"
 
-        echo "status=success" >> ${GITHUB_OUTPUT}
+        find . \
+          -maxdepth 1 \
+          -type f \
+          -print
 
-    # ============================================================
-    # 20. 上传固件目录
-    # ============================================================
+        echo "FIRMWARE=$PWD" \
+          >> "$GITHUB_ENV"
+
+        echo "status=success" \
+          >> "$GITHUB_OUTPUT"
+
     - name: 上传固件目录
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
@@ -555,53 +608,44 @@ jobs:
         name: OpenWrt_firmware${{ env.FILE_DATE }}
         path: ${{ env.FIRMWARE }}
 
-    # ============================================================
-    # 21. 生成 Release 标签
-    # ============================================================
     - name: 生成发布标签
       id: tag
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        echo "release_tag=$(date +"%Y.%m.%d-%H.%M")-${{ matrix.ARCHITECTURE }}" >> ${GITHUB_OUTPUT}
+        set -e
+
+        echo "release_tag=$(date +"%Y.%m.%d-%H.%M")-${{ matrix.ARCHITECTURE }}-h6xk" \
+          >> "$GITHUB_OUTPUT"
 
         touch release.txt
 
-        echo "
-        💻 设备: Hinlink OPC-H6XK
+        echo "iStoreOS 6.x" >> release.txt
+        echo "" >> release.txt
 
-        🏗️ 架构: ${{ matrix.ARCHITECTURE }}
+        echo "架构: ${{ matrix.ARCHITECTURE }}" >> release.txt
+        echo "设备: Hinlink OPC-H6XK" >> release.txt
+        echo "源码: ${{ env.REPO_URL }}" >> release.txt
+        echo "分支: ${{ matrix.REPO_BRANCH }}" >> release.txt
+        echo "编译时间: $(date +"%Y年%m月%d日 %H时%M分")" >> release.txt
+        echo "" >> release.txt
 
-        📂 源码: ${{ env.REPO_URL }}
+        echo "目标配置：" >> release.txt
+        echo "CONFIG_TARGET_rockchip=y" >> release.txt
+        echo "CONFIG_TARGET_rockchip_armv8=y" >> release.txt
+        echo "CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y" >> release.txt
+        echo "" >> release.txt
 
-        🌳 分支: ${{ matrix.REPO_BRANCH }}
+        echo "说明：本版本仅编译 Hinlink OPC-H6XK。" \
+          >> release.txt
 
-        ⏱️ 编译时间: $(date +"%Y年%m月%d日%H时%M分")
-
-        🌐 管理地址: 192.168.100.1
-
-        👤 用户名: root
-
-        🔒 密码: password
-
-        📒 说明: Hinlink OPC-H6XK 单设备固件。
-        " >> release.txt
-
-        echo "status=success" >> ${GITHUB_OUTPUT}
-
-    # ============================================================
-    # 22. 自动发布固件到 Releases
-    # ============================================================
     - name: 自动发布固件到 Releases
       uses: softprops/action-gh-release@v2
-      if: steps.tag.outputs.status == 'success' && !cancelled()
+      if: steps.tag.outputs.release_tag != '' && !cancelled()
       with:
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
         files: ${{ env.FIRMWARE }}/*
 
-    # ============================================================
-    # 23. 删除运行记录
-    # ============================================================
     - name: 删除运行记录
       uses: xiaomeng9597/delete-workflow-runs@main
       if: always()
@@ -610,9 +654,6 @@ jobs:
         keep_minimum_runs: 15
         token: ${{ env.GITHUB_TOKEN }}
 
-    # ============================================================
-    # 24. 删除旧 Releases
-    # ============================================================
     - name: 删除自动发布的旧固件
       uses: dev-drprasad/delete-older-releases@v0.3.3
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
