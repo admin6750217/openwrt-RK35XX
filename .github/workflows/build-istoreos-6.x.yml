@@ -21,6 +21,7 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +33,7 @@ jobs:
           - ubuntu-22.04
 
     steps:
+
       - name: 合并磁盘
         uses: easimon/maximize-build-space@master
         with:
@@ -54,10 +56,12 @@ jobs:
           mkdir -p ./armv8
 
           echo "下载官方 feeds.conf..."
+
           wget -qO "./armv8/${FEEDS_CONF}" \
             "https://fw0.koolcenter.com/iStoreOS/easepi-r1/feeds.conf"
 
           echo "下载官方 config.buildinfo..."
+
           wget -qO "./armv8/${CONFIG_FILE}" \
             "https://fw0.koolcenter.com/iStoreOS/easepi-r1/config.buildinfo"
 
@@ -66,7 +70,16 @@ jobs:
 
           cp "./armv8/${CONFIG_FILE}" "./armv8/config.official"
 
-          echo "合并 configfiles/config_data-6.x.txt..."
+          echo "官方配置："
+          wc -l "./armv8/config.official"
+
+          echo "检查自定义配置..."
+
+          if [ -f "./configfiles/config_data-6.x.txt" ]; then
+            echo "找到 configfiles/config_data-6.x.txt"
+          else
+            echo "未找到自定义配置，使用官方 config.buildinfo"
+          fi
 
           python3 - <<'PY'
           from pathlib import Path
@@ -76,27 +89,37 @@ jobs:
           output = Path("./armv8/.config")
 
           official_lines = official.read_text(errors="ignore").splitlines()
-          custom_lines = custom.read_text(errors="ignore").splitlines() if custom.exists() else []
+
+          if custom.exists():
+              custom_lines = custom.read_text(errors="ignore").splitlines()
+          else:
+              custom_lines = []
 
           values = {}
 
           for line in official_lines:
               line = line.strip()
+
               if line.startswith("CONFIG_") and "=" in line:
                   key = line.split("=", 1)[0]
                   values[key] = line
 
+              elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+                  key = line[2:].split(" ", 1)[0]
+                  values[key] = line
+
           for line in custom_lines:
               line = line.strip()
+
               if line.startswith("CONFIG_") and "=" in line:
                   key = line.split("=", 1)[0]
                   values[key] = line
+
               elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
                   key = line[2:].split(" ", 1)[0]
                   values[key] = line
 
           result = []
-
           seen = set()
 
           for line in official_lines:
@@ -104,18 +127,22 @@ jobs:
 
               if stripped.startswith("CONFIG_") and "=" in stripped:
                   key = stripped.split("=", 1)[0]
+
                   if key in values:
                       if key not in seen:
                           result.append(values[key])
                           seen.add(key)
+
                   continue
 
               if stripped.startswith("# CONFIG_") and stripped.endswith(" is not set"):
                   key = stripped[2:].split(" ", 1)[0]
+
                   if key in values:
                       if key not in seen:
                           result.append(values[key])
                           seen.add(key)
+
                   continue
 
               result.append(line)
@@ -125,21 +152,24 @@ jobs:
 
               if stripped.startswith("CONFIG_") and "=" in stripped:
                   key = stripped.split("=", 1)[0]
+
                   if key not in seen:
                       result.append(line)
                       seen.add(key)
 
               elif stripped.startswith("# CONFIG_") and stripped.endswith(" is not set"):
                   key = stripped[2:].split(" ", 1)[0]
+
                   if key not in seen:
                       result.append(line)
                       seen.add(key)
 
           output.write_text("\n".join(result) + "\n")
 
-          print("官方配置:", official)
-          print("自定义配置:", custom)
-          print("最终配置:", output)
+          print("配置合并完成：")
+          print("官方配置 :", official)
+          print("自定义配置 :", custom)
+          print("最终配置 :", output)
           PY
 
           test -s "./armv8/.config"
@@ -147,18 +177,20 @@ jobs:
       - name: 检查编译环境
         shell: bash
         run: |
-          echo "CPU:"
+          echo "================ CPU ================"
           nproc
 
-          echo "Memory:"
+          echo "================ Memory ================"
           free -h
 
-          echo "Disk:"
+          echo "================ Disk ================"
           df -h
 
       - name: 安装编译依赖
         shell: bash
         run: |
+          set -e
+
           sudo apt-get update
 
           sudo apt-get install -y \
@@ -187,6 +219,7 @@ jobs:
             p7zip-full
 
           python3 -m pip install --upgrade pip
+
           python3 -m pip install pyelftools
 
           sudo timedatectl set-timezone "${TZ}" || true
@@ -194,15 +227,13 @@ jobs:
       - name: 克隆 iStoreOS
         shell: bash
         run: |
-          git clone --depth=1 \
+          set -e
+
+          git clone \
+            --depth=1 \
             --branch "${{ matrix.REPO_BRANCH }}" \
             "${REPO_URL}" \
             openwrt
-
-      - name: 缓存编译目录
-        uses: klever1988/cachewrtbuild@main
-        with:
-          ccache: true
 
       - name: 准备 feeds
         shell: bash
@@ -213,8 +244,11 @@ jobs:
 
           if [ -f "./${DIY_P1_SH}" ]; then
             chmod +x "./${DIY_P1_SH}"
+
             cd openwrt
+
             "../${DIY_P1_SH}"
+
             cd ..
           fi
 
@@ -226,6 +260,7 @@ jobs:
           cd openwrt
 
           ./scripts/feeds update -a
+
           ./scripts/feeds install -a
 
       - name: 应用配置并锁定 Hinlink OPC-H6XK
@@ -242,14 +277,19 @@ jobs:
 
           if [ -f "./${DIY_P2_SH}" ]; then
             chmod +x "./${DIY_P2_SH}"
+
             cd openwrt
+
             "../${DIY_P2_SH}"
+
             cd ..
           fi
 
           cd openwrt
 
-          echo "清理所有 Rockchip ARMv8 DEVICE..."
+          echo "========================================"
+          echo "清除所有 Rockchip ARMv8 DEVICE"
+          echo "========================================"
 
           sed -i \
             '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
@@ -279,7 +319,11 @@ jobs:
           CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y
           EOF
 
-          echo "当前目标配置："
+          echo ""
+          echo "========================================"
+          echo "当前 Target 配置"
+          echo "========================================"
+
           grep '^CONFIG_TARGET' .config | grep -E 'rockchip|DEVICE' || true
 
       - name: 锁定目标设备检查
@@ -289,13 +333,23 @@ jobs:
 
           cd openwrt
 
-          echo "检查 make defconfig 前的 DEVICE..."
+          echo "========================================"
+          echo "检查 make defconfig 前的 DEVICE"
+          echo "========================================"
 
-          devices="$(grep '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' .config || true)"
+          devices="$(
+            grep \
+              '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+              .config || true
+          )"
 
           echo "${devices}"
 
-          count="$(printf '%s\n' "${devices}" | sed '/^$/d' | wc -l)"
+          count="$(
+            printf '%s\n' "${devices}" |
+            sed '/^$/d' |
+            wc -l
+          )"
 
           if [ "${count}" -ne 1 ]; then
             echo "错误：Rockchip ARMv8 DEVICE 数量不是 1"
@@ -305,11 +359,12 @@ jobs:
           if ! grep -q \
             '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y$' \
             .config; then
-            echo "错误：不是 Hinlink OPC-H6XK"
+
+            echo "错误：当前目标不是 Hinlink OPC-H6XK"
             exit 1
           fi
 
-          echo "目标设备检查通过。"
+          echo "目标设备检查通过：Hinlink OPC-H6XK"
 
       - name: make defconfig
         shell: bash
@@ -327,13 +382,23 @@ jobs:
 
           cd openwrt
 
-          echo "检查 make defconfig 后的 DEVICE..."
+          echo "========================================"
+          echo "检查 make defconfig 后的 DEVICE"
+          echo "========================================"
 
-          devices="$(grep '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' .config || true)"
+          devices="$(
+            grep \
+              '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+              .config || true
+          )"
 
           echo "${devices}"
 
-          count="$(printf '%s\n' "${devices}" | sed '/^$/d' | wc -l)"
+          count="$(
+            printf '%s\n' "${devices}" |
+            sed '/^$/d' |
+            wc -l
+          )"
 
           if [ "${count}" -eq 1 ] && \
              grep -q \
@@ -341,32 +406,32 @@ jobs:
              .config; then
 
             echo "H6XK 已正确锁定。"
-            exit 0
-          fi
 
-          echo "重新强制锁定 Hinlink OPC-H6XK..."
+          else
 
-          sed -i \
-            '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
-            .config
+            echo "重新强制锁定 Hinlink OPC-H6XK..."
 
-          sed -i \
-            '/^# CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.* is not set$/d' \
-            .config
+            sed -i \
+              '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
+              .config
 
-          sed -i \
-            '/^CONFIG_TARGET_rockchip=/d' \
-            .config
+            sed -i \
+              '/^# CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.* is not set$/d' \
+              .config
 
-          sed -i \
-            '/^CONFIG_TARGET_rockchip_armv8=/d' \
-            .config
+            sed -i \
+              '/^CONFIG_TARGET_rockchip=/d' \
+              .config
 
-          sed -i \
-            '/^CONFIG_TARGET_MULTI_PROFILE=/d' \
-            .config
+            sed -i \
+              '/^CONFIG_TARGET_rockchip_armv8=/d' \
+              .config
 
-          cat >> .config <<'EOF'
+            sed -i \
+              '/^CONFIG_TARGET_MULTI_PROFILE=/d' \
+              .config
+
+            cat >> .config <<'EOF'
 
           CONFIG_TARGET_rockchip=y
           CONFIG_TARGET_rockchip_armv8=y
@@ -374,27 +439,45 @@ jobs:
           CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y
           EOF
 
-          make defconfig
+            make defconfig
+          fi
 
-          devices="$(grep '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' .config || true)"
+          echo ""
+          echo "========================================"
+          echo "最终 DEVICE 检查"
+          echo "========================================"
+
+          devices="$(
+            grep \
+              '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
+              .config || true
+          )"
 
           echo "${devices}"
 
-          count="$(printf '%s\n' "${devices}" | sed '/^$/d' | wc -l)"
+          count="$(
+            printf '%s\n' "${devices}" |
+            sed '/^$/d' |
+            wc -l
+          )"
 
           if [ "${count}" -ne 1 ]; then
-            echo "错误：仍然存在多个 Rockchip ARMv8 DEVICE"
+            echo "错误：最终 Rockchip ARMv8 DEVICE 数量不是 1"
             exit 1
           fi
 
           if ! grep -q \
             '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y$' \
             .config; then
+
             echo "错误：最终目标不是 Hinlink OPC-H6XK"
             exit 1
           fi
 
+          echo ""
+          echo "========================================"
           echo "最终目标确认：Hinlink OPC-H6XK"
+          echo "========================================"
 
       - name: 下载依赖
         shell: bash
@@ -405,7 +488,10 @@ jobs:
 
           make download -j8
 
-          find dl -type f -size -1k -delete || true
+          find dl \
+            -type f \
+            -size -1k \
+            -delete || true
 
       - name: 编译固件
         shell: bash
@@ -414,13 +500,16 @@ jobs:
 
           cd openwrt
 
-          echo "开始编译 Hinlink OPC-H6XK..."
+          echo "========================================"
+          echo "开始编译 Hinlink OPC-H6XK"
+          echo "========================================"
 
           make -j"$(nproc)" || \
           make -j1 || \
           make -j1 V=s
 
           FILE_DATE="$(date +'%Y%m%d-%H%M%S')"
+
           echo "FILE_DATE=${FILE_DATE}" >> "${GITHUB_ENV}"
 
       - name: 查找内核模块
@@ -449,15 +538,21 @@ jobs:
         run: |
           set -e
 
-          TARGET_DIR="$(find openwrt/bin/targets \
-            -mindepth 2 \
-            -maxdepth 2 \
-            -type d \
-            | head -n 1)"
+          TARGET_DIR="$(
+            find openwrt/bin/targets \
+              -mindepth 2 \
+              -maxdepth 2 \
+              -type d |
+            head -n 1
+          )"
 
           if [ -z "${TARGET_DIR}" ]; then
             echo "错误：没有找到固件目标目录"
-            find openwrt/bin/targets -maxdepth 3 -type d || true
+
+            find openwrt/bin/targets \
+              -maxdepth 3 \
+              -type d || true
+
             exit 1
           fi
 
@@ -478,16 +573,23 @@ jobs:
             -type f \
             -name '*.img.gz' \
             -print \
-            -quit | grep -q .; then
+            -quit |
+            grep -q .; then
 
             echo "错误：没有找到 img.gz 固件"
+
             ls -lah
+
             exit 1
           fi
 
           echo "FIRMWARE=${PWD}" >> "${GITHUB_ENV}"
 
-          echo "最终固件："
+          echo ""
+          echo "========================================"
+          echo "最终固件"
+          echo "========================================"
+
           ls -lah
 
       - name: 上传固件
@@ -522,7 +624,11 @@ jobs:
             CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y
             ```
 
-            本次编译已强制清除其他 Rockchip ARMv8 DEVICE，仅编译 Hinlink OPC-H6XK。
+            本次编译仅针对 Hinlink OPC-H6XK。
+
+            已在 make defconfig 前后检查 Rockchip ARMv8 DEVICE，
+            确保最终仅保留 Hinlink OPC-H6XK。
+
           files: |
             ${{ env.FIRMWARE }}/*
           fail_on_unmatched_files: true
