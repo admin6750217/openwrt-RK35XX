@@ -3,15 +3,22 @@ name: Build iStore OS 6.x
 on:
   repository_dispatch:
   workflow_dispatch:
+    # inputs:
+      # ssh:
+        # description: 'SSH connection to Actions'
+        # required: false
+        # default: 'false'
   schedule:
-    - cron: 0 16 * * *
+   - cron: 0 16 * * *
 
 env:
   REPO_URL: https://github.com/istoreos/istoreos
-  FEEDS_CONF: feeds.conf
-  CONFIG_FILE: config.txt
+  # REPO_BRANCH: main
+  FEEDS_CONF: armv8/feeds.conf
+  CONFIG_FILE: armv8/.config
   DIY_P1_SH: diy-part1-6.x.sh
   DIY_P2_SH: diy-part2-6.x.sh
+  UPLOAD_BIN_DIR: true
   UPLOAD_FIRMWARE: true
   UPLOAD_RELEASE: true
   TZ: Asia/Shanghai
@@ -20,22 +27,20 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-
     strategy:
-      fail-fast: false
       matrix:
         REPO_BRANCH:
+          # - main
           - istoreos-24.10
+          # - istoreos-23.05
         ARCHITECTURE:
           - armv8
         os:
           - ubuntu-22.04
 
-    steps:
+      fail-fast: false
 
-    # ================================
-    # 合并磁盘空间
-    # ================================
+    steps:
     - name: 合并磁盘
       uses: easimon/maximize-build-space@master
       with:
@@ -43,148 +48,58 @@ jobs:
         temp-reserve-mb: 100
         root-reserve-mb: 1024
 
-    # ================================
-    # 检出配置仓库
-    # ================================
     - name: 准备完成
       uses: actions/checkout@main
 
-    # ================================
-    # 创建工作目录
-    # ================================
     - name: 创建工作目录
       run: |
-        mkdir -p "${GITHUB_WORKSPACE}/workdir"
-        chmod 755 "${GITHUB_WORKSPACE}/workdir"
-        echo "WORKDIR_PATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
+        mkdir -p ${GITHUB_WORKSPACE}/workdir
+        chmod 755 ${GITHUB_WORKSPACE}/workdir
+        echo "WORKDIR_PATH=$PWD" >> $GITHUB_ENV
 
-    # ================================
-    # 检查服务器配置
-    # ================================
     - name: 检查服务器配置
       run: |
         echo "若分配的服务器性能不足，务必及时取消，重新运行！"
-
         echo -e "------------------------------- CPU信息 -------------------------------\n"
-
-        echo "CPU物理数量:"
-        cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l
-
-        echo -e "CPU核心及版本信息:"
-        cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c
-
-        echo -e "\n------------------------------- 内存信息 -------------------------------\n"
-
-        echo "已安装内存详细信息:"
-        sudo lshw -short -C memory | grep GiB || true
-
-        echo -e "\n------------------------------- 磁盘信息 -------------------------------\n"
-
-        echo "磁盘数量:"
-        ls /dev/sd* 2>/dev/null | grep -v '[1-9]' | wc -l || true
-
-        echo -e "\n------------------------------- 磁盘详情 -------------------------------\n"
-
+        echo "CPU物理数量:$(cat /proc/cpuinfo| grep "physical id"| sort| uniq| wc -l)"
+        echo -e "CPU核心及版本信息: $(cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c) \n"
+        echo -e "------------------------------- 内存信息 -------------------------------\n"
+        echo "已安装内存详细信息: "
+        sudo lshw -short -C memory | grep GiB
+        echo -e "\n"
+        echo -e "------------------------------- 磁盘信息 -------------------------------\n"
+        echo -e "磁盘数量: $(ls /dev/sd* | grep -v [1-9] | wc -l) \n"
+        echo "------------------------------- 磁盘详情 -------------------------------\n"
         df -Th
 
-    # ================================
-    # 初始化编译环境
-    # ================================
     - name: 初始化编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
         echo "------------------------------- 更新并安装依赖 -------------------------------"
-
-        sudo rm -rf \
-          /etc/apt/sources.list.d/* \
-          /usr/share/dotnet \
-          /etc/mysql \
-          /etc/php \
-          /usr/local/lib/android \
-          /opt/ghc
-
+        sudo rm -rf /etc/apt/sources.list.d/* /usr/share/dotnet /etc/mysql /etc/php /usr/local/lib/android /opt/ghc
         sudo -E apt-get -qq update
-
-        sudo -E apt-get -qq install \
-          $(cat "$GITHUB_WORKSPACE/depends/${{ matrix.os }}")
-
-        echo "------------------------------- 安装 Python 依赖 -------------------------------"
-
-        wget -q https://bootstrap.pypa.io/pip/3.6/get-pip.py
-
+        sudo -E apt-get -qq install $(cat $GITHUB_WORKSPACE/depends/${{ matrix.os }})
+        wget https://bootstrap.pypa.io/pip/3.6/get-pip.py
         sudo python3 get-pip.py
-
-        sudo rm -f get-pip.py
-
+        sudo rm -rf get-pip.py
         sudo pip install pyelftools
-
-        echo "------------------------------- 清理 Docker 镜像和软件 -------------------------------"
-
-        if [ -n "$(docker images -q 2>/dev/null)" ]; then
-          docker rmi $(docker images -q) || true
-        fi
-
-        docker image prune -a -f || true
-
-        sudo -E apt-get -y purge \
-          azure-cli \
-          ghc* \
-          zulu* \
-          hhvm \
-          llvm* \
-          firefox \
-          google* \
-          dotnet* \
-          powershell \
-          openjdk* \
-          adoptopenjdk* \
-          mysql* \
-          php* \
-          mongodb* \
-          moby* \
-          snapd* \
-          android* || true
-
-        sudo -E apt-get -qq autoremove --purge || true
-        sudo -E apt-get -qq clean || true
-
+        echo "------------------------------- 清理Docker镜像和软件 -------------------------------"
+        [ -n "$(docker images -q)" ] && docker rmi $(docker images -q)
+        docker image prune -a -f
+        sudo -E apt-get -y purge azure-cli ghc* zulu* hhvm llvm* firefox google* dotnet* powershell openjdk* adoptopenjdk* mysql* php* mongodb* dotnet* moby* snapd* android* || true
+        sudo -E apt-get -qq autoremove --purge
+        sudo -E apt-get -qq clean
         echo "------------------------------- 设置时区 -------------------------------"
-
         sudo timedatectl set-timezone "$TZ"
 
-    # ================================
-    # 克隆 iStoreOS 源码
-    # ================================
     - name: 克隆源码
       working-directory: ${{ env.WORKDIR_PATH }}/workdir
       run: |
-        df -hT "$PWD"
+        df -hT $PWD
+        git clone $REPO_URL -b ${{ matrix.REPO_BRANCH }} openwrt
+        ln -sf ${{ env.WORKDIR_PATH }}/workdir/openwrt $GITHUB_WORKSPACE/openwrt
 
-        git clone \
-          --depth=1 \
-          --single-branch \
-          -b "${{ matrix.REPO_BRANCH }}" \
-          "$REPO_URL" \
-          openwrt
-
-        ln -sfn \
-          "${{ env.WORKDIR_PATH }}/workdir/openwrt" \
-          "$GITHUB_WORKSPACE/openwrt"
-
-        echo "源码目录:"
-        pwd
-
-        echo "当前分支:"
-        cd openwrt
-        git branch --show-current
-
-        echo "当前提交:"
-        git log -1 --oneline
-
-    # ================================
-    # 缓存构建
-    # ================================
     - name: 缓存构建动作
       uses: klever1988/cachewrtbuild@main
       with:
@@ -192,300 +107,92 @@ jobs:
         mixkey: ${{ matrix.os }}-${{ matrix.ARCHITECTURE }}-${{ matrix.REPO_BRANCH }}
         prefix: ${{ github.workspace }}/openwrt
 
-    # ================================
-    # 加载自定义 feeds
-    # ================================
     - name: 加载自定义 feeds
-      env:
-        FEEDS_CONF_PATH: ${{ matrix.ARCHITECTURE }}/${{ env.FEEDS_CONF }}
       run: |
-        test -f "$GITHUB_WORKSPACE/$FEEDS_CONF_PATH"
+        [ -e $GITHUB_WORKSPACE/$FEEDS_CONF ] && cp $GITHUB_WORKSPACE/$FEEDS_CONF openwrt/feeds.conf
+        chmod +x $DIY_P1_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P1_SH
 
-        mv \
-          "$GITHUB_WORKSPACE/$FEEDS_CONF_PATH" \
-          "$GITHUB_WORKSPACE/openwrt/$FEEDS_CONF"
-
-        chmod +x "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-        cd "$GITHUB_WORKSPACE/openwrt"
-
-        "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-    # ================================
-    # 更新 feeds
-    # ================================
     - name: 更新 feeds
-      run: |
-        cd "$GITHUB_WORKSPACE/openwrt"
-        ./scripts/feeds update -a
+      run: cd openwrt && ./scripts/feeds update -a
 
-    # ================================
-    # 安装 feeds
-    # ================================
     - name: 安装 feeds
-      run: |
-        cd "$GITHUB_WORKSPACE/openwrt"
-        ./scripts/feeds install -a
+      run: cd openwrt && ./scripts/feeds install -a
 
-    # ================================
-    # 加载自定义配置
-    # ================================
     - name: 加载自定义配置
-      env:
-        CONFIG_FILE_PATH: ${{ matrix.ARCHITECTURE }}/${{ env.CONFIG_FILE }}
       run: |
-        if [ -d "$GITHUB_WORKSPACE/files" ]; then
-          rm -rf "$GITHUB_WORKSPACE/openwrt/files"
-          mv "$GITHUB_WORKSPACE/files" "$GITHUB_WORKSPACE/openwrt/files"
-        fi
+        [ -e files ] && mv files openwrt/files
+        [ -e $GITHUB_WORKSPACE/$CONFIG_FILE ] && cp $GITHUB_WORKSPACE/$CONFIG_FILE openwrt/.config
+        chmod +x $DIY_P2_SH
+        cd openwrt
+        $GITHUB_WORKSPACE/$DIY_P2_SH
 
-        test -f "$GITHUB_WORKSPACE/$CONFIG_FILE_PATH"
+    # - name: SSH 连接到 Actions
+      # uses: P3TERX/ssh2actions@main
+      # if: (github.event.inputs.ssh == 'true' && github.event.inputs.ssh  != 'false') || contains(github.event.action, 'ssh')
+      # env:
+        # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        # TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
-        mv \
-          "$GITHUB_WORKSPACE/$CONFIG_FILE_PATH" \
-          "$GITHUB_WORKSPACE/openwrt/$CONFIG_FILE"
-
-        chmod +x "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-        cd "$GITHUB_WORKSPACE/openwrt"
-
-        "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-    # ================================
-    # 下载软件包
-    # ================================
     - name: 下载软件包
       id: package
       run: |
-        cd "$GITHUB_WORKSPACE/openwrt"
-
-        echo "开始生成默认配置..."
-
+        cd openwrt
         make defconfig
-
-        echo "开始下载软件包..."
-
         make download -j8
-
-        echo "检查异常小文件..."
-
-        find dl -size -1024c -exec ls -l {} \; || true
-
+        find dl -size -1024c -exec ls -l {} \;
         find dl -size -1024c -exec rm -f {} \;
 
-    # ================================
-    # 编译固件
-    # ================================
     - name: 编译固件
       id: compile
       run: |
-        cd "$GITHUB_WORKSPACE/openwrt"
+        cd openwrt
+        echo -e "$(nproc) thread compile"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        echo "status=success" >> ${GITHUB_OUTPUT}
 
-        echo "=============================="
-        echo "CPU线程数: $(nproc)"
-        echo "开始编译 iStoreOS"
-        echo "=============================="
-
-        make -j"$(nproc)" || \
-        make -j1 || \
-        make -j1 V=s
-
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
-
-        echo "status=success" >> "$GITHUB_OUTPUT"
-
-        echo "=============================="
-        echo "编译完成"
-        echo "=============================="
-
-    # ================================
-    # 查找 KO 文件
-    # ================================
     - name: 查找ko文件
-      if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
-        cd "$GITHUB_WORKSPACE/openwrt"
+        cd openwrt
+        find . -type f -name "*.ko"
+        find build_dir/target-*/linux-*/linux-*/drivers/net/ -name "*.ko"
 
-        echo "=============================="
-        echo "查找 KO 内核模块"
-        echo "=============================="
-
-        find . -type f -name "*.ko" -print || true
-
-        find \
-          build_dir/target-*/linux-*/linux-*/drivers/net/ \
-          -name "*.ko" \
-          -print 2>/dev/null || true
-
-    # ================================
-    # 检查磁盘空间
-    # ================================
     - name: 检查磁盘空间
       if: (!cancelled())
-      run: |
-        echo "=============================="
-        echo "磁盘使用情况"
-        echo "=============================="
+      run: df -hT
 
-        df -hT
+    - name: 上传 bin 文件夹
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
+      with:
+        name: OpenWrt_bin${{ env.FILE_DATE }}
+        path: openwrt/bin
 
-    # ================================
-    # 整理固件文件
-    # ================================
     - name: 整理固件文件
       id: organize
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
+      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
-        set -e
-
-        echo "=============================="
-        echo "查找固件输出目录"
-        echo "=============================="
-
-        TARGET_DIR=$(find "$GITHUB_WORKSPACE/openwrt/bin/targets" \
-          -mindepth 2 \
-          -maxdepth 2 \
-          -type d \
-          -print -quit)
-
-        if [ -z "$TARGET_DIR" ]; then
-          echo "错误：找不到固件输出目录"
-
-          echo "当前 bin/targets 内容:"
-          find "$GITHUB_WORKSPACE/openwrt/bin/targets" \
-            -maxdepth 5 \
-            -print 2>/dev/null || true
-
-          exit 1
-        fi
-
-        cd "$TARGET_DIR"
-
-        echo "固件输出目录:"
-        echo "$PWD"
-
-        echo
-        echo "=============================="
-        echo "编译生成的全部文件"
-        echo "=============================="
-
-        find . \
-          -maxdepth 1 \
-          -type f \
-          -printf '%f\n' \
-          | sort
-
-        echo
-        echo "=============================="
-        echo "检测 IMG 固件"
-        echo "=============================="
-
-        IMAGE_FILES=$(find . \
-          -maxdepth 1 \
-          -type f \
-          \( \
-            -name '*.img.gz' \
-            -o -name '*.img.xz' \
-            -o -name '*.img.zst' \
-            -o -name '*.img' \
-          \) \
-          -print)
-
-        if [ -z "$IMAGE_FILES" ]; then
-          echo
-          echo "错误：没有找到 IMG 固件镜像！"
-          echo
-          echo "当前目录全部文件:"
-          find . \
-            -maxdepth 1 \
-            -type f \
-            -printf '%f\n' \
-            | sort
-
-          echo
-          echo "检查其他可能的固件文件:"
-          find . \
-            -maxdepth 1 \
-            -type f \
-            \( \
-              -name '*.bin' \
-              -o -name '*.itb' \
-              -o -name '*.tar' \
-              -o -name '*.gz' \
-              -o -name '*.xz' \
-              -o -name '*.zst' \
-            \) \
-            -printf '%f\n' \
-            | sort || true
-
-          exit 1
-        fi
-
-        echo "找到以下 IMG 固件:"
-        echo "$IMAGE_FILES"
-
-        echo
-        echo "删除 packages 目录..."
-
+        cd openwrt/bin/targets/*/*
         rm -rf packages
+        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
+        echo "status=success" >> ${GITHUB_OUTPUT}
 
-        echo
-        echo "清理非固件文件..."
-
-        find . \
-          -maxdepth 1 \
-          -type f \
-          ! -name '*.img.gz' \
-          ! -name '*.img.xz' \
-          ! -name '*.img.zst' \
-          ! -name '*.img' \
-          -delete
-
-        echo
-        echo "=============================="
-        echo "最终固件文件"
-        echo "=============================="
-
-        find . \
-          -maxdepth 1 \
-          -type f \
-          -printf '%f\n' \
-          | sort
-
-        echo
-        echo "设置固件目录:"
-        echo "$PWD"
-
-        echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
-        echo "status=success" >> "$GITHUB_OUTPUT"
-
-    # ================================
-    # 上传 IMG 固件 Artifact
-    # ================================
-    - name: 上传 IMG 固件
+    - name: 上传固件目录
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
       with:
         name: OpenWrt_firmware${{ env.FILE_DATE }}
-        path: |
-          ${{ env.FIRMWARE }}/*.img.gz
-          ${{ env.FIRMWARE }}/*.img.xz
-          ${{ env.FIRMWARE }}/*.img.zst
-          ${{ env.FIRMWARE }}/*.img
-        if-no-files-found: error
+        path: ${{ env.FIRMWARE }}
 
-    # ================================
-    # 生成 Release 标签
-    # ================================
     - name: 生成发布标签
       id: tag
-      if: steps.compile.outputs.status == 'success' && steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
+      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        RELEASE_TAG="$(date +"%Y.%m.%d-%H.%M")-${{ matrix.ARCHITECTURE }}"
-
-        echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
-
-        cat > release.txt << EOF
+        echo "release_tag=$(date +"%Y.%m.%d-%H.%M")-${{ matrix.ARCHITECTURE }}" >> ${GITHUB_OUTPUT}
+        touch release.txt
+        echo "
         💻 架构: ${{ matrix.ARCHITECTURE }}
 
         📂 源码: ${{ env.REPO_URL }}
@@ -500,51 +207,28 @@ jobs:
 
         🔒 密码: password
 
-        📒 说明:
-        单网口设备默认网口为LAN，旁路由模式，需要接入主路由器后进后台查找对应IP地址访问。
+        📒 说明: 单网口设备默认网口为LAN，旁路由模式，需要接入主路由器后进后台查找对应IP地址访问，反之双网口设备默认网口为WAN+LAN，主路由模式。 " >> release.txt
+        echo "status=success" >> ${GITHUB_OUTPUT}
 
-        双网口设备默认网口为WAN+LAN，主路由模式。
-        EOF
-
-        echo "status=success" >> "$GITHUB_OUTPUT"
-
-        echo "Release 标签:"
-        echo "$RELEASE_TAG"
-
-    # ================================
-    # 自动发布 Release
-    # ================================
     - name: 自动发布固件到 Releases
       uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
       with:
-        repository: ${{ github.repository }}
         tag_name: ${{ steps.tag.outputs.release_tag }}
         body_path: release.txt
-        files: |
-          ${{ env.FIRMWARE }}/*.img.gz
-          ${{ env.FIRMWARE }}/*.img.xz
-          ${{ env.FIRMWARE }}/*.img.zst
-          ${{ env.FIRMWARE }}/*.img
-        fail_on_unmatched_files: true
+        files: ${{ env.FIRMWARE }}/*
 
-    # ================================
-    # 删除运行记录
-    # ================================
     - name: 删除运行记录
       uses: xiaomeng9597/delete-workflow-runs@main
-      if: always()
       with:
         retain_days: 20
         keep_minimum_runs: 15
         token: ${{ env.GITHUB_TOKEN }}
 
-    # ================================
-    # 删除自动发布的旧固件
-    # ================================
     - name: 删除自动发布的旧固件
       uses: dev-drprasad/delete-older-releases@v0.3.3
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
       with:
         keep_latest: 60
         delete_tags: true
+        token: ${{ env.GITHUB_TOKEN }}
