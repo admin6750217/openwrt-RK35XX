@@ -4,7 +4,7 @@ on:
   repository_dispatch:
   workflow_dispatch:
   schedule:
-    - cron: 0 16 * * *
+    - cron: '0 16 * * *'
 
 env:
   REPO_URL: https://github.com/istoreos/istoreos
@@ -21,7 +21,6 @@ env:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
-
     strategy:
       fail-fast: false
       matrix:
@@ -33,421 +32,224 @@ jobs:
           - ubuntu-22.04
 
     steps:
-
-    - name: 合并磁盘
-      uses: easimon/maximize-build-space@master
-      with:
-        swap-size-mb: 1024
-        temp-reserve-mb: 100
-        root-reserve-mb: 1024
-
-    - name: 准备完成
-      uses: actions/checkout@main
-
-    - name: 编译前同步官方 ARMv8 配置
-      run: |
-        set -e
-
-        mkdir -p ./armv8
-
-        echo "========================================"
-        echo "下载官方 feeds.conf"
-        echo "========================================"
-
-        wget --no-check-certificate --no-cache \
-          -O ./armv8/feeds.conf \
-          https://fw0.koolcenter.com/iStoreOS/easepi-r1/feeds.conf
-
-        echo "========================================"
-        echo "下载官方 config.buildinfo"
-        echo "========================================"
-
-        wget --no-check-certificate --no-cache \
-          -O ./armv8/.config \
-          https://fw0.koolcenter.com/iStoreOS/easepi-r1/config.buildinfo
-
-        if [ ! -s "./armv8/.config" ]; then
-          echo "错误：官方 config.buildinfo 下载失败"
-          exit 1
-        fi
-
-        if [ ! -s "./armv8/feeds.conf" ]; then
-          echo "错误：官方 feeds.conf 下载失败"
-          exit 1
-        fi
-
-        if [ ! -s "./configfiles/config_data-6.x.txt" ]; then
-          echo "错误：configfiles/config_data-6.x.txt 不存在或为空"
-          exit 1
-        fi
-
-        cp ./armv8/.config ./armv8/.config.official
-
-        python3 <<'PY'
-from pathlib import Path
-import re
-
-official_file = Path("./armv8/.config")
-custom_file = Path("./configfiles/config_data-6.x.txt")
-
-official_lines = official_file.read_text(
-    encoding="utf-8",
-    errors="ignore"
-).splitlines()
-
-custom_lines = custom_file.read_text(
-    encoding="utf-8",
-    errors="ignore"
-).splitlines()
-
-config = {}
-order = []
-
-enabled_pattern = re.compile(
-    r"^(CONFIG_[A-Za-z0-9_]+)=(.*)$"
-)
-
-disabled_pattern = re.compile(
-    r"^#\s*(CONFIG_[A-Za-z0-9_]+)\s+is not set$"
-)
-
-def process(lines):
-    for raw in lines:
-        line = raw.strip()
-
-        if not line:
-            continue
-
-        match = enabled_pattern.match(line)
-
-        if match:
-            symbol = match.group(1)
-
-            if symbol not in config:
-                order.append(symbol)
-
-            config[symbol] = line
-            continue
-
-        match = disabled_pattern.match(line)
-
-        if match:
-            symbol = match.group(1)
-
-            if symbol not in config:
-                order.append(symbol)
-
-            config[symbol] = line
-
-process(official_lines)
-process(custom_lines)
-
-output = "\n".join(
-    config[symbol]
-    for symbol in order
-) + "\n"
-
-official_file.write_text(
-    output,
-    encoding="utf-8"
-)
-PY
-
-        echo "========================================"
-        echo "合并后的 Rockchip DEVICE"
-        echo "========================================"
-
-        grep \
-          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-          ./armv8/.config \
-          || true
-
-    - name: 创建工作目录
-      run: |
-        set -e
-
-        mkdir -p "${GITHUB_WORKSPACE}/workdir"
-        chmod 755 "${GITHUB_WORKSPACE}/workdir"
-
-        echo "WORKDIR_PATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
-
-    - name: 检查服务器配置
-      run: |
-        echo "========================================"
-        echo "CPU"
-        echo "========================================"
-
-        nproc
-
-        echo "========================================"
-        echo "内存"
-        echo "========================================"
-
-        free -h
-
-        echo "========================================"
-        echo "磁盘"
-        echo "========================================"
-
-        df -hT
-
-    - name: 初始化编译环境
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        set -e
-
-        sudo apt-get update
-
-        sudo apt-get install -y \
-          build-essential \
-          clang \
-          flex \
-          bison \
-          g++ \
-          gawk \
-          gcc-multilib \
-          g++-multilib \
-          gettext \
-          git \
-          libncurses5-dev \
-          libssl-dev \
-          python3 \
-          python3-distutils \
-          python3-pip \
-          rsync \
-          unzip \
-          zlib1g-dev \
-          file \
-          wget \
-          curl \
-          jq \
-          bc \
-          swig \
-          time
-
-        sudo timedatectl set-timezone "$TZ" || true
-
-        python3 -m pip install --upgrade pip || true
-        python3 -m pip install pyelftools || true
-
-        gcc --version
-        python3 --version
-        make --version
-
-    - name: 克隆源码
-      working-directory: ${{ env.WORKDIR_PATH }}/workdir
-      run: |
-        set -e
-
-        df -hT "$PWD"
-
-        git clone \
-          --depth=1 \
-          "$REPO_URL" \
-          -b "${{ matrix.REPO_BRANCH }}" \
-          openwrt
-
-        ln -sf \
-          "${{ env.WORKDIR_PATH }}/workdir/openwrt" \
-          "$GITHUB_WORKSPACE/openwrt"
-
-        cd openwrt
-
-        git branch
-        git log -1 --oneline
-
-    - name: 缓存构建动作
-      uses: klever1988/cachewrtbuild@main
-      with:
-        ccache: 'true'
-        mixkey: ${{ matrix.os }}-${{ matrix.ARCHITECTURE }}-${{ matrix.REPO_BRANCH }}
-        prefix: ${{ github.workspace }}/openwrt
-
-    - name: 加载自定义 feeds
-      run: |
-        set -e
-
-        if [ ! -f "./armv8/feeds.conf" ]; then
-          echo "错误：armv8/feeds.conf 不存在"
-          exit 1
-        fi
-
-        cp \
-          ./armv8/feeds.conf \
-          ./openwrt/feeds.conf
-
-        chmod +x "$DIY_P1_SH"
-
-        cd openwrt
-
-        "$GITHUB_WORKSPACE/$DIY_P1_SH"
-
-    - name: 更新 feeds
-      run: |
-        set -e
-
-        cd openwrt
-
-        ./scripts/feeds update -a
-
-    - name: 安装 feeds
-      run: |
-        set -e
-
-        cd openwrt
-
-        ./scripts/feeds install -a
-
-    - name: 加载自定义配置
-      run: |
-        set -e
-
-        echo "========================================"
-        echo "加载最终配置"
-        echo "========================================"
-
-        if [ -e files ]; then
-          mv files openwrt/files
-        fi
-
-        if [ ! -f "./armv8/.config" ]; then
-          echo "错误：armv8/.config 不存在"
-          exit 1
-        fi
-
-        cp \
-          ./armv8/.config \
-          ./openwrt/.config
-
-        chmod +x "$DIY_P2_SH"
-
-        cd openwrt
-
-        "$GITHUB_WORKSPACE/$DIY_P2_SH"
-
-        echo "========================================"
-        echo "强制锁定 Hinlink OPC-H6XK"
-        echo "========================================"
-
-        sed -i \
-          '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
-          .config
-
-        sed -i \
-          '/^# CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.* is not set$/d' \
-          .config
-
-        sed -i \
-          '/^CONFIG_TARGET_rockchip=/d' \
-          .config
-
-        sed -i \
-          '/^CONFIG_TARGET_rockchip_armv8=/d' \
-          .config
-
-        sed -i \
-          '/^CONFIG_TARGET_MULTI_PROFILE=/d' \
-          .config
-
-        echo 'CONFIG_TARGET_rockchip=y' >> .config
-        echo 'CONFIG_TARGET_rockchip_armv8=y' >> .config
-        echo 'CONFIG_TARGET_MULTI_PROFILE=y' >> .config
-
-        echo 'CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y' >> .config
-
-        echo "========================================"
-        echo "强制锁定后的 DEVICE"
-        echo "========================================"
-
-        grep \
-          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-          .config
-
-    - name: 校验只编译 Hinlink OPC-H6XK
-      run: |
-        set -e
-
-        cd openwrt
-
-        EXPECTED='CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y'
-
-        echo "========================================"
-        echo "当前 Rockchip DEVICE"
-        echo "========================================"
-
-        grep \
-          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-          .config \
-          || true
-
-        DEVICE_COUNT=$(grep \
-          -c \
-          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-          .config || true)
-
-        if [ "$DEVICE_COUNT" -ne 1 ]; then
-          echo "错误：发现 $DEVICE_COUNT 个 Rockchip ARMv8 DEVICE"
-          exit 1
-        fi
-
-        if ! grep -qx "$EXPECTED" .config; then
-          echo "错误：唯一 DEVICE 不是 Hinlink OPC-H6XK"
-          exit 1
-        fi
-
-        echo "========================================"
-        echo "✓ DEVICE 校验通过"
-        echo "✓ 只允许 Hinlink OPC-H6XK"
-        echo "========================================"
-
-    - name: 生成最终配置
-      id: defconfig
-      run: |
-        set -e
-
-        cd openwrt
-
-        echo "========================================"
-        echo "执行 make defconfig"
-        echo "========================================"
-
-        make defconfig
-
-        echo "========================================"
-        echo "defconfig 后 Rockchip DEVICE"
-        echo "========================================"
-
-        grep \
-          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-          .config \
-          || true
-
-    - name: defconfig 后再次校验 H6XK
-      run: |
-        set -e
-
-        cd openwrt
-
-        EXPECTED='CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y'
-
-        DEVICE_COUNT=$(grep \
-          -c \
-          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-          .config || true)
-
-        echo "========================================"
-        echo "defconfig 后 DEVICE 数量：$DEVICE_COUNT"
-        echo "========================================"
-
-        grep \
-          '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-          .config \
-          || true
-
-        if [ "$DEVICE_COUNT" -ne 1 ]; then
-          echo "错误：defconfig 后存在多个 Rockchip DEVICE"
-          echo "重新清理其他 DEVICE"
+      - name: 合并磁盘
+        uses: easimon/maximize-build-space@master
+        with:
+          swap-size-mb: 1024
+          temp-reserve-mb: 100
+          root-reserve-mb: 1024
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+
+      - name: 检出当前仓库
+        uses: actions/checkout@main
+
+      - name: 编译前同步官方 ARMv8 配置
+        shell: bash
+        run: |
+          set -e
+
+          mkdir -p ./armv8
+
+          echo "下载官方 feeds.conf..."
+          wget -qO "./armv8/${FEEDS_CONF}" \
+            "https://fw0.koolcenter.com/iStoreOS/easepi-r1/feeds.conf"
+
+          echo "下载官方 config.buildinfo..."
+          wget -qO "./armv8/${CONFIG_FILE}" \
+            "https://fw0.koolcenter.com/iStoreOS/easepi-r1/config.buildinfo"
+
+          test -s "./armv8/${FEEDS_CONF}"
+          test -s "./armv8/${CONFIG_FILE}"
+
+          cp "./armv8/${CONFIG_FILE}" "./armv8/config.official"
+
+          echo "合并 configfiles/config_data-6.x.txt..."
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          official = Path("./armv8/config.official")
+          custom = Path("./configfiles/config_data-6.x.txt")
+          output = Path("./armv8/.config")
+
+          official_lines = official.read_text(errors="ignore").splitlines()
+          custom_lines = custom.read_text(errors="ignore").splitlines() if custom.exists() else []
+
+          values = {}
+
+          for line in official_lines:
+              line = line.strip()
+              if line.startswith("CONFIG_") and "=" in line:
+                  key = line.split("=", 1)[0]
+                  values[key] = line
+
+          for line in custom_lines:
+              line = line.strip()
+              if line.startswith("CONFIG_") and "=" in line:
+                  key = line.split("=", 1)[0]
+                  values[key] = line
+              elif line.startswith("# CONFIG_") and line.endswith(" is not set"):
+                  key = line[2:].split(" ", 1)[0]
+                  values[key] = line
+
+          result = []
+
+          seen = set()
+
+          for line in official_lines:
+              stripped = line.strip()
+
+              if stripped.startswith("CONFIG_") and "=" in stripped:
+                  key = stripped.split("=", 1)[0]
+                  if key in values:
+                      if key not in seen:
+                          result.append(values[key])
+                          seen.add(key)
+                  continue
+
+              if stripped.startswith("# CONFIG_") and stripped.endswith(" is not set"):
+                  key = stripped[2:].split(" ", 1)[0]
+                  if key in values:
+                      if key not in seen:
+                          result.append(values[key])
+                          seen.add(key)
+                  continue
+
+              result.append(line)
+
+          for line in custom_lines:
+              stripped = line.strip()
+
+              if stripped.startswith("CONFIG_") and "=" in stripped:
+                  key = stripped.split("=", 1)[0]
+                  if key not in seen:
+                      result.append(line)
+                      seen.add(key)
+
+              elif stripped.startswith("# CONFIG_") and stripped.endswith(" is not set"):
+                  key = stripped[2:].split(" ", 1)[0]
+                  if key not in seen:
+                      result.append(line)
+                      seen.add(key)
+
+          output.write_text("\n".join(result) + "\n")
+
+          print("官方配置:", official)
+          print("自定义配置:", custom)
+          print("最终配置:", output)
+          PY
+
+          test -s "./armv8/.config"
+
+      - name: 检查编译环境
+        shell: bash
+        run: |
+          echo "CPU:"
+          nproc
+
+          echo "Memory:"
+          free -h
+
+          echo "Disk:"
+          df -h
+
+      - name: 安装编译依赖
+        shell: bash
+        run: |
+          sudo apt-get update
+
+          sudo apt-get install -y \
+            build-essential \
+            clang \
+            flex \
+            bison \
+            gawk \
+            gettext \
+            git \
+            libncurses5-dev \
+            libncurses-dev \
+            libssl-dev \
+            python3-dev \
+            python3-distutils \
+            python3-pip \
+            rsync \
+            unzip \
+            zlib1g-dev \
+            file \
+            wget \
+            curl \
+            jq \
+            rename \
+            xz-utils \
+            p7zip-full
+
+          python3 -m pip install --upgrade pip
+          python3 -m pip install pyelftools
+
+          sudo timedatectl set-timezone "${TZ}" || true
+
+      - name: 克隆 iStoreOS
+        shell: bash
+        run: |
+          git clone --depth=1 \
+            --branch "${{ matrix.REPO_BRANCH }}" \
+            "${REPO_URL}" \
+            openwrt
+
+      - name: 缓存编译目录
+        uses: klever1988/cachewrtbuild@main
+        with:
+          ccache: true
+
+      - name: 准备 feeds
+        shell: bash
+        run: |
+          set -e
+
+          cp "./armv8/${FEEDS_CONF}" "./openwrt/${FEEDS_CONF}"
+
+          if [ -f "./${DIY_P1_SH}" ]; then
+            chmod +x "./${DIY_P1_SH}"
+            cd openwrt
+            "../${DIY_P1_SH}"
+            cd ..
+          fi
+
+      - name: 更新并安装 feeds
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 应用配置并锁定 Hinlink OPC-H6XK
+        shell: bash
+        run: |
+          set -e
+
+          cp "./armv8/${CONFIG_FILE}" "./openwrt/${CONFIG_FILE}"
+
+          if [ -d "./files" ]; then
+            rm -rf "./openwrt/files"
+            cp -a "./files" "./openwrt/files"
+          fi
+
+          if [ -f "./${DIY_P2_SH}" ]; then
+            chmod +x "./${DIY_P2_SH}"
+            cd openwrt
+            "../${DIY_P2_SH}"
+            cd ..
+          fi
+
+          cd openwrt
+
+          echo "清理所有 Rockchip ARMv8 DEVICE..."
 
           sed -i \
             '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
@@ -457,208 +259,289 @@ PY
             '/^# CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.* is not set$/d' \
             .config
 
-          echo "$EXPECTED" >> .config
+          sed -i \
+            '/^CONFIG_TARGET_rockchip=/d' \
+            .config
+
+          sed -i \
+            '/^CONFIG_TARGET_rockchip_armv8=/d' \
+            .config
+
+          sed -i \
+            '/^CONFIG_TARGET_MULTI_PROFILE=/d' \
+            .config
+
+          cat >> .config <<'EOF'
+
+          CONFIG_TARGET_rockchip=y
+          CONFIG_TARGET_rockchip_armv8=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y
+          EOF
+
+          echo "当前目标配置："
+          grep '^CONFIG_TARGET' .config | grep -E 'rockchip|DEVICE' || true
+
+      - name: 锁定目标设备检查
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
+
+          echo "检查 make defconfig 前的 DEVICE..."
+
+          devices="$(grep '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' .config || true)"
+
+          echo "${devices}"
+
+          count="$(printf '%s\n' "${devices}" | sed '/^$/d' | wc -l)"
+
+          if [ "${count}" -ne 1 ]; then
+            echo "错误：Rockchip ARMv8 DEVICE 数量不是 1"
+            exit 1
+          fi
+
+          if ! grep -q \
+            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y$' \
+            .config; then
+            echo "错误：不是 Hinlink OPC-H6XK"
+            exit 1
+          fi
+
+          echo "目标设备检查通过。"
+
+      - name: make defconfig
+        shell: bash
+        run: |
+          set -e
+
+          cd openwrt
 
           make defconfig
 
-          DEVICE_COUNT=$(grep \
-            -c \
-            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-            .config || true)
-        fi
+      - name: defconfig 后再次锁定 H6XK
+        shell: bash
+        run: |
+          set -e
 
-        if [ "$DEVICE_COUNT" -ne 1 ]; then
-          echo "错误：最终仍存在多个 Rockchip DEVICE"
-          grep \
-            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-            .config \
-            || true
-          exit 1
-        fi
+          cd openwrt
 
-        if ! grep -qx "$EXPECTED" .config; then
-          echo "错误：最终 DEVICE 不是 H6XK"
-          grep \
-            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' \
-            .config \
-            || true
-          exit 1
-        fi
+          echo "检查 make defconfig 后的 DEVICE..."
 
-        echo "========================================"
-        echo "✓ 最终配置确认"
-        echo "========================================"
+          devices="$(grep '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' .config || true)"
 
-        echo "CONFIG_TARGET_rockchip=y"
-        echo "CONFIG_TARGET_rockchip_armv8=y"
-        echo "CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y"
+          echo "${devices}"
 
-        echo "========================================"
+          count="$(printf '%s\n' "${devices}" | sed '/^$/d' | wc -l)"
 
-    - name: 下载软件包
-      id: package
-      run: |
-        set -e
+          if [ "${count}" -eq 1 ] && \
+             grep -q \
+             '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y$' \
+             .config; then
 
-        cd openwrt
+            echo "H6XK 已正确锁定。"
+            exit 0
+          fi
 
-        make download -j8
+          echo "重新强制锁定 Hinlink OPC-H6XK..."
 
-        find dl \
-          -size -1024c \
-          -exec ls -l {} \;
+          sed -i \
+            '/^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$/d' \
+            .config
 
-        find dl \
-          -size -1024c \
-          -exec rm -f {} \;
+          sed -i \
+            '/^# CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.* is not set$/d' \
+            .config
 
-    - name: 编译固件
-      id: compile
-      run: |
-        set -e
+          sed -i \
+            '/^CONFIG_TARGET_rockchip=/d' \
+            .config
 
-        cd openwrt
+          sed -i \
+            '/^CONFIG_TARGET_rockchip_armv8=/d' \
+            .config
 
-        echo "========================================"
-        echo "开始编译 Hinlink OPC-H6XK"
-        echo "========================================"
+          sed -i \
+            '/^CONFIG_TARGET_MULTI_PROFILE=/d' \
+            .config
 
-        echo "CPU线程：$(nproc)"
+          cat >> .config <<'EOF'
 
-        make -j$(nproc) || \
-        make -j1 || \
-        make -j1 V=s
+          CONFIG_TARGET_rockchip=y
+          CONFIG_TARGET_rockchip_armv8=y
+          CONFIG_TARGET_MULTI_PROFILE=y
+          CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y
+          EOF
 
-        echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" \
-          >> "$GITHUB_ENV"
+          make defconfig
 
-        echo "status=success" \
-          >> "$GITHUB_OUTPUT"
+          devices="$(grep '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_.*=y$' .config || true)"
 
-        echo "========================================"
-        echo "✓ Hinlink OPC-H6XK 编译完成"
-        echo "========================================"
+          echo "${devices}"
 
-    - name: 查找ko文件
-      if: steps.compile.outputs.status == 'success'
-      run: |
-        cd openwrt
+          count="$(printf '%s\n' "${devices}" | sed '/^$/d' | wc -l)"
 
-        echo "========================================"
-        echo "KO 文件"
-        echo "========================================"
+          if [ "${count}" -ne 1 ]; then
+            echo "错误：仍然存在多个 Rockchip ARMv8 DEVICE"
+            exit 1
+          fi
 
-        find . \
-          -type f \
-          -name "*.ko" \
-          | sort
+          if ! grep -q \
+            '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y$' \
+            .config; then
+            echo "错误：最终目标不是 Hinlink OPC-H6XK"
+            exit 1
+          fi
 
-        echo "========================================"
-        echo "Rockchip 网络驱动 KO"
-        echo "========================================"
+          echo "最终目标确认：Hinlink OPC-H6XK"
 
-        find \
-          build_dir/target-*/linux-*/linux-*/drivers/net/ \
-          -name "*.ko" \
-          2>/dev/null \
-          | sort \
-          || true
+      - name: 下载依赖
+        shell: bash
+        run: |
+          set -e
 
-    - name: 检查磁盘空间
-      if: (!cancelled())
-      run: |
-        df -hT
+          cd openwrt
 
-    - name: 上传 bin 文件夹
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_BIN_DIR == 'true'
-      with:
-        name: OpenWrt_bin${{ env.FILE_DATE }}
-        path: openwrt/bin
+          make download -j8
 
-    - name: 整理固件文件
-      id: organize
-      if: env.UPLOAD_FIRMWARE == 'true' && !cancelled()
-      run: |
-        set -e
+          find dl -type f -size -1k -delete || true
 
-        cd openwrt/bin/targets/*/*
+      - name: 编译固件
+        shell: bash
+        run: |
+          set -o pipefail
 
-        rm -rf packages
+          cd openwrt
 
-        echo "========================================"
-        echo "固件文件"
-        echo "========================================"
+          echo "开始编译 Hinlink OPC-H6XK..."
 
-        find . \
-          -maxdepth 1 \
-          -type f \
-          -print
+          make -j"$(nproc)" || \
+          make -j1 || \
+          make -j1 V=s
 
-        echo "FIRMWARE=$PWD" \
-          >> "$GITHUB_ENV"
+          FILE_DATE="$(date +'%Y%m%d-%H%M%S')"
+          echo "FILE_DATE=${FILE_DATE}" >> "${GITHUB_ENV}"
 
-        echo "status=success" \
-          >> "$GITHUB_OUTPUT"
+      - name: 查找内核模块
+        if: always()
+        shell: bash
+        run: |
+          echo "查找 .ko 文件..."
 
-    - name: 上传固件目录
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success' && !cancelled()
-      with:
-        name: OpenWrt_firmware${{ env.FILE_DATE }}
-        path: ${{ env.FIRMWARE }}
+          find openwrt/bin \
+            -type f \
+            -name '*.ko' \
+            -print 2>/dev/null || true
 
-    - name: 生成发布标签
-      id: tag
-      if: steps.compile.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
-      run: |
-        set -e
+      - name: 上传完整编译目录
+        if: env.UPLOAD_BIN_DIR == 'true'
+        uses: actions/upload-artifact@main
+        with:
+          name: iStoreOS-${{ matrix.ARCHITECTURE }}-h6xk-bin
+          path: openwrt/bin/
+          if-no-files-found: warn
+          retention-days: 7
 
-        echo "release_tag=$(date +"%Y.%m.%d-%H.%M")-${{ matrix.ARCHITECTURE }}-h6xk" \
-          >> "$GITHUB_OUTPUT"
+      - name: 整理固件
+        if: env.UPLOAD_FIRMWARE == 'true'
+        shell: bash
+        run: |
+          set -e
 
-        touch release.txt
+          TARGET_DIR="$(find openwrt/bin/targets \
+            -mindepth 2 \
+            -maxdepth 2 \
+            -type d \
+            | head -n 1)"
 
-        echo "iStoreOS 6.x" >> release.txt
-        echo "" >> release.txt
+          if [ -z "${TARGET_DIR}" ]; then
+            echo "错误：没有找到固件目标目录"
+            find openwrt/bin/targets -maxdepth 3 -type d || true
+            exit 1
+          fi
 
-        echo "架构: ${{ matrix.ARCHITECTURE }}" >> release.txt
-        echo "设备: Hinlink OPC-H6XK" >> release.txt
-        echo "源码: ${{ env.REPO_URL }}" >> release.txt
-        echo "分支: ${{ matrix.REPO_BRANCH }}" >> release.txt
-        echo "编译时间: $(date +"%Y年%m月%d日 %H时%M分")" >> release.txt
-        echo "" >> release.txt
+          echo "固件目录：${TARGET_DIR}"
 
-        echo "目标配置：" >> release.txt
-        echo "CONFIG_TARGET_rockchip=y" >> release.txt
-        echo "CONFIG_TARGET_rockchip_armv8=y" >> release.txt
-        echo "CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y" >> release.txt
-        echo "" >> release.txt
+          cd "${TARGET_DIR}"
 
-        echo "说明：本版本仅编译 Hinlink OPC-H6XK。" \
-          >> release.txt
+          rm -rf packages
 
-    - name: 自动发布固件到 Releases
-      uses: softprops/action-gh-release@v2
-      if: steps.tag.outputs.release_tag != '' && !cancelled()
-      with:
-        tag_name: ${{ steps.tag.outputs.release_tag }}
-        body_path: release.txt
-        files: ${{ env.FIRMWARE }}/*
+          find . \
+            -maxdepth 1 \
+            -type f \
+            ! -name '*.img.gz' \
+            -delete
 
-    - name: 删除运行记录
-      uses: xiaomeng9597/delete-workflow-runs@main
-      if: always()
-      with:
-        retain_days: 20
-        keep_minimum_runs: 15
-        token: ${{ env.GITHUB_TOKEN }}
+          if ! find . \
+            -maxdepth 1 \
+            -type f \
+            -name '*.img.gz' \
+            -print \
+            -quit | grep -q .; then
 
-    - name: 删除自动发布的旧固件
-      uses: dev-drprasad/delete-older-releases@v0.3.3
-      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
-      env:
-        GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
-      with:
-        keep_latest: 60
-        delete_tags: true
+            echo "错误：没有找到 img.gz 固件"
+            ls -lah
+            exit 1
+          fi
+
+          echo "FIRMWARE=${PWD}" >> "${GITHUB_ENV}"
+
+          echo "最终固件："
+          ls -lah
+
+      - name: 上传固件
+        if: env.UPLOAD_FIRMWARE == 'true'
+        uses: actions/upload-artifact@main
+        with:
+          name: iStoreOS-${{ matrix.ARCHITECTURE }}-hinlink-opc-h6xk
+          path: ${{ env.FIRMWARE }}/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 发布 Release
+        if: env.UPLOAD_RELEASE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: iStoreOS-${{ matrix.REPO_BRANCH }}-${{ matrix.ARCHITECTURE }}-h6xk-${{ env.FILE_DATE }}
+          name: iStoreOS ${{ matrix.REPO_BRANCH }} ${{ matrix.ARCHITECTURE }} Hinlink OPC-H6XK ${{ env.FILE_DATE }}
+          body: |
+            ## iStoreOS 6.x
+
+            - 架构：${{ matrix.ARCHITECTURE }}
+            - 分支：${{ matrix.REPO_BRANCH }}
+            - 设备：Hinlink OPC-H6XK
+            - 构建时间：${{ env.FILE_DATE }}
+
+            ### Target
+
+            ```text
+            CONFIG_TARGET_rockchip=y
+            CONFIG_TARGET_rockchip_armv8=y
+            CONFIG_TARGET_MULTI_PROFILE=y
+            CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y
+            ```
+
+            本次编译已强制清除其他 Rockchip ARMv8 DEVICE，仅编译 Hinlink OPC-H6XK。
+          files: |
+            ${{ env.FIRMWARE }}/*
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
+
+      - name: 删除旧 Workflow Runs
+        if: always()
+        uses: xiaomeng9597/delete-workflow-runs@main
+        with:
+          token: ${{ secrets.ACCESS_TOKEN }}
+          retain_days: 0
+          keep_minimum_runs: 5
+
+      - name: 删除旧 Releases
+        if: always()
+        uses: dev-drprasad/delete-older-releases@v0.3.3
+        with:
+          keep_latest: 60
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.ACCESS_TOKEN }}
