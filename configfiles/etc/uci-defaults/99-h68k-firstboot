@@ -1,6 +1,6 @@
 #!/bin/sh
 
-[ "$(board_name)" = "hinlink,opc-h68k" ] || exit 0
+[ "$(board_name)" = "hinlink,opc-h6xx" ] || exit 0
 
 if [ ! -s /etc/config/wireless ]; then
 	wifi config >/dev/null 2>&1 || true
