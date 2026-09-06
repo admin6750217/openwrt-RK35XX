@@ -4,7 +4,7 @@ on:
   repository_dispatch:
   workflow_dispatch:
   schedule:
-    - cron: '0 16 * * *'
+    - cron: 0 16 * * *
 
 env:
   REPO_URL: https://github.com/istoreos/istoreos
@@ -33,9 +33,9 @@ jobs:
 
     steps:
 
-    # ============================================================
+    # ================================
     # 合并磁盘空间
-    # ============================================================
+    # ================================
     - name: 合并磁盘
       uses: easimon/maximize-build-space@master
       with:
@@ -43,74 +43,58 @@ jobs:
         temp-reserve-mb: 100
         root-reserve-mb: 1024
 
-    # ============================================================
+    # ================================
     # 检出配置仓库
-    # ============================================================
+    # ================================
     - name: 准备完成
       uses: actions/checkout@main
 
-    # ============================================================
+    # ================================
     # 创建工作目录
-    # ============================================================
+    # ================================
     - name: 创建工作目录
       run: |
-        set -e
-
         mkdir -p "${GITHUB_WORKSPACE}/workdir"
         chmod 755 "${GITHUB_WORKSPACE}/workdir"
-
         echo "WORKDIR_PATH=$GITHUB_WORKSPACE" >> "$GITHUB_ENV"
 
-    # ============================================================
+    # ================================
     # 检查服务器配置
-    # ============================================================
+    # ================================
     - name: 检查服务器配置
       run: |
-        echo "========================================"
-        echo "服务器配置"
-        echo "========================================"
-
         echo "若分配的服务器性能不足，务必及时取消，重新运行！"
 
-        echo
-        echo "---------------- CPU信息 ----------------"
+        echo -e "------------------------------- CPU信息 -------------------------------\n"
 
         echo "CPU物理数量:"
-        cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l || true
+        cat /proc/cpuinfo | grep "physical id" | sort | uniq | wc -l
 
-        echo
-        echo "CPU核心及版本信息:"
-        cat /proc/cpuinfo | grep "model name" | sort | uniq -c || true
+        echo -e "CPU核心及版本信息:"
+        cat /proc/cpuinfo | grep name | cut -f2 -d: | uniq -c
 
-        echo
-        echo "---------------- 内存信息 ----------------"
+        echo -e "\n------------------------------- 内存信息 -------------------------------\n"
 
         echo "已安装内存详细信息:"
         sudo lshw -short -C memory | grep GiB || true
 
-        echo
-        echo "---------------- 磁盘信息 ----------------"
+        echo -e "\n------------------------------- 磁盘信息 -------------------------------\n"
 
         echo "磁盘数量:"
         ls /dev/sd* 2>/dev/null | grep -v '[1-9]' | wc -l || true
 
-        echo
-        echo "---------------- 磁盘详情 ----------------"
+        echo -e "\n------------------------------- 磁盘详情 -------------------------------\n"
 
-        df -hT
+        df -Th
 
-    # ============================================================
+    # ================================
     # 初始化编译环境
-    # ============================================================
+    # ================================
     - name: 初始化编译环境
       env:
         DEBIAN_FRONTEND: noninteractive
       run: |
-        set -e
-
-        echo "========================================"
-        echo "更新并安装依赖"
-        echo "========================================"
+        echo "------------------------------- 更新并安装依赖 -------------------------------"
 
         sudo rm -rf \
           /etc/apt/sources.list.d/* \
@@ -125,30 +109,23 @@ jobs:
         sudo -E apt-get -qq install \
           $(cat "$GITHUB_WORKSPACE/depends/${{ matrix.os }}")
 
-        echo
-        echo "========================================"
-        echo "安装 Python 依赖"
-        echo "========================================"
+        echo "------------------------------- 安装 Python 依赖 -------------------------------"
 
-        python3 -m pip install --upgrade pip
+        wget -q https://bootstrap.pypa.io/pip/3.6/get-pip.py
 
-        sudo python3 -m pip install pyelftools
+        sudo python3 get-pip.py
 
-        echo
-        echo "========================================"
-        echo "清理 Docker"
-        echo "========================================"
+        sudo rm -f get-pip.py
+
+        sudo pip install pyelftools
+
+        echo "------------------------------- 清理 Docker 镜像和软件 -------------------------------"
 
         if [ -n "$(docker images -q 2>/dev/null)" ]; then
           docker rmi $(docker images -q) || true
         fi
 
         docker image prune -a -f || true
-
-        echo
-        echo "========================================"
-        echo "清理预装软件"
-        echo "========================================"
 
         sudo -E apt-get -y purge \
           azure-cli \
@@ -172,28 +149,17 @@ jobs:
         sudo -E apt-get -qq autoremove --purge || true
         sudo -E apt-get -qq clean || true
 
-        echo
-        echo "========================================"
-        echo "设置时区"
-        echo "========================================"
+        echo "------------------------------- 设置时区 -------------------------------"
 
         sudo timedatectl set-timezone "$TZ"
 
-        date
-
-    # ============================================================
+    # ================================
     # 克隆 iStoreOS 源码
-    # ============================================================
+    # ================================
     - name: 克隆源码
       working-directory: ${{ env.WORKDIR_PATH }}/workdir
       run: |
-        set -e
-
         df -hT "$PWD"
-
-        echo "========================================"
-        echo "克隆 iStoreOS"
-        echo "========================================"
 
         git clone \
           --depth=1 \
@@ -206,22 +172,19 @@ jobs:
           "${{ env.WORKDIR_PATH }}/workdir/openwrt" \
           "$GITHUB_WORKSPACE/openwrt"
 
-        echo
         echo "源码目录:"
         pwd
 
-        echo
         echo "当前分支:"
         cd openwrt
         git branch --show-current
 
-        echo
         echo "当前提交:"
         git log -1 --oneline
 
-    # ============================================================
+    # ================================
     # 缓存构建
-    # ============================================================
+    # ================================
     - name: 缓存构建动作
       uses: klever1988/cachewrtbuild@main
       with:
@@ -229,19 +192,13 @@ jobs:
         mixkey: ${{ matrix.os }}-${{ matrix.ARCHITECTURE }}-${{ matrix.REPO_BRANCH }}
         prefix: ${{ github.workspace }}/openwrt
 
-    # ============================================================
+    # ================================
     # 加载自定义 feeds
-    # ============================================================
+    # ================================
     - name: 加载自定义 feeds
       env:
         FEEDS_CONF_PATH: ${{ matrix.ARCHITECTURE }}/${{ env.FEEDS_CONF }}
       run: |
-        set -e
-
-        echo "========================================"
-        echo "加载自定义 feeds"
-        echo "========================================"
-
         test -f "$GITHUB_WORKSPACE/$FEEDS_CONF_PATH"
 
         mv \
@@ -254,47 +211,32 @@ jobs:
 
         "$GITHUB_WORKSPACE/$DIY_P1_SH"
 
-    # ============================================================
+    # ================================
     # 更新 feeds
-    # ============================================================
+    # ================================
     - name: 更新 feeds
       run: |
-        set -e
-
         cd "$GITHUB_WORKSPACE/openwrt"
-
         ./scripts/feeds update -a
 
-    # ============================================================
+    # ================================
     # 安装 feeds
-    # ============================================================
+    # ================================
     - name: 安装 feeds
       run: |
-        set -e
-
         cd "$GITHUB_WORKSPACE/openwrt"
-
         ./scripts/feeds install -a
 
-    # ============================================================
+    # ================================
     # 加载自定义配置
-    # ============================================================
+    # ================================
     - name: 加载自定义配置
       env:
         CONFIG_FILE_PATH: ${{ matrix.ARCHITECTURE }}/${{ env.CONFIG_FILE }}
       run: |
-        set -e
-
-        echo "========================================"
-        echo "加载自定义配置"
-        echo "========================================"
-
         if [ -d "$GITHUB_WORKSPACE/files" ]; then
           rm -rf "$GITHUB_WORKSPACE/openwrt/files"
-
-          mv \
-            "$GITHUB_WORKSPACE/files" \
-            "$GITHUB_WORKSPACE/openwrt/files"
+          mv "$GITHUB_WORKSPACE/files" "$GITHUB_WORKSPACE/openwrt/files"
         fi
 
         test -f "$GITHUB_WORKSPACE/$CONFIG_FILE_PATH"
@@ -309,187 +251,107 @@ jobs:
 
         "$GITHUB_WORKSPACE/$DIY_P2_SH"
 
-    # ============================================================
+    # ================================
     # 下载软件包
-    # ============================================================
+    # ================================
     - name: 下载软件包
       id: package
       run: |
-        set -e
-
         cd "$GITHUB_WORKSPACE/openwrt"
 
-        echo "========================================"
-        echo "生成最终配置"
-        echo "========================================"
+        echo "开始生成默认配置..."
 
         make defconfig
 
-        echo
-        echo "========================================"
-        echo "Target 配置"
-        echo "========================================"
-
-        grep '^CONFIG_TARGET_' .config || true
-
-        echo
-        echo "========================================"
-        echo "检查指定设备"
-        echo "========================================"
-
-        if grep -q '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_hinlink_opc-h6xk=y' .config; then
-          echo "OK：已选择 hinlink_opc-h6xk"
-        else
-          echo "错误：没有选择 hinlink_opc-h6xk"
-          echo
-          echo "当前 Rockchip ARMv8 Device:"
-          grep '^CONFIG_TARGET_DEVICE_rockchip_armv8_DEVICE_' .config || true
-          exit 1
-        fi
-
-        echo
-        echo "========================================"
-        echo "检查 ALL_PROFILES"
-        echo "========================================"
-
-        if grep -q '^CONFIG_TARGET_ALL_PROFILES=y' .config; then
-          echo "错误：CONFIG_TARGET_ALL_PROFILES=y"
-          echo "本次构建禁止 ALL_PROFILES"
-          exit 1
-        else
-          echo "OK：未启用 CONFIG_TARGET_ALL_PROFILES"
-        fi
-
-        echo
-        echo "========================================"
-        echo "开始下载软件包"
-        echo "========================================"
+        echo "开始下载软件包..."
 
         make download -j8
 
-        echo
-        echo "检查异常小文件:"
+        echo "检查异常小文件..."
 
         find dl -size -1024c -exec ls -l {} \; || true
 
         find dl -size -1024c -exec rm -f {} \;
 
-    # ============================================================
+    # ================================
     # 编译固件
-    # ============================================================
+    # ================================
     - name: 编译固件
       id: compile
       run: |
-        set -e
-
         cd "$GITHUB_WORKSPACE/openwrt"
 
-        echo "========================================"
+        echo "=============================="
         echo "CPU线程数: $(nproc)"
         echo "开始编译 iStoreOS"
-        echo "========================================"
+        echo "=============================="
 
-        if make -j"$(nproc)"; then
-          echo "多线程编译成功"
-        else
-          echo "多线程编译失败，开始单线程编译..."
-          make -j1
-        fi
+        make -j"$(nproc)" || \
+        make -j1 || \
+        make -j1 V=s
 
         echo "FILE_DATE=_$(date +"%Y%m%d%H%M")" >> "$GITHUB_ENV"
 
         echo "status=success" >> "$GITHUB_OUTPUT"
 
-        echo
-        echo "========================================"
+        echo "=============================="
         echo "编译完成"
-        echo "========================================"
+        echo "=============================="
 
-    # ============================================================
+    # ================================
     # 查找 KO 文件
-    # ============================================================
+    # ================================
     - name: 查找ko文件
       if: steps.compile.outputs.status == 'success' && !cancelled()
       run: |
         cd "$GITHUB_WORKSPACE/openwrt"
 
-        echo "========================================"
+        echo "=============================="
         echo "查找 KO 内核模块"
-        echo "========================================"
+        echo "=============================="
 
-        find . \
-          -type f \
-          -name "*.ko" \
-          -print || true
-
-        echo
-        echo "网络驱动 KO:"
+        find . -type f -name "*.ko" -print || true
 
         find \
           build_dir/target-*/linux-*/linux-*/drivers/net/ \
           -name "*.ko" \
           -print 2>/dev/null || true
 
-    # ============================================================
+    # ================================
     # 检查磁盘空间
-    # ============================================================
+    # ================================
     - name: 检查磁盘空间
       if: (!cancelled())
       run: |
-        echo "========================================"
+        echo "=============================="
         echo "磁盘使用情况"
-        echo "========================================"
+        echo "=============================="
 
         df -hT
 
-    # ============================================================
+    # ================================
     # 整理固件文件
-    #
-    # 重要：
-    # 固定使用：
-    #
-    # openwrt/bin/targets/rockchip/armv8
-    #
-    # 不再使用：
-    #
-    # find ... -print -quit
-    #
-    # 防止误进入 ath79/generic。
-    # ============================================================
+    # ================================
     - name: 整理固件文件
       id: organize
       if: steps.compile.outputs.status == 'success' && env.UPLOAD_FIRMWARE == 'true' && !cancelled()
       run: |
         set -e
 
-        echo "========================================"
-        echo "整理 Rockchip ARMv8 固件"
-        echo "========================================"
+        echo "=============================="
+        echo "查找固件输出目录"
+        echo "=============================="
 
-        TARGET_DIR="$GITHUB_WORKSPACE/openwrt/bin/targets/rockchip/armv8"
+        TARGET_DIR=$(find "$GITHUB_WORKSPACE/openwrt/bin/targets" \
+          -mindepth 2 \
+          -maxdepth 2 \
+          -type d \
+          -print -quit)
 
-        echo
-        echo "指定固件目录:"
-        echo "$TARGET_DIR"
+        if [ -z "$TARGET_DIR" ]; then
+          echo "错误：找不到固件输出目录"
 
-        # ========================================================
-        # 检查 Rockchip ARMv8 目录
-        # ========================================================
-        if [ ! -d "$TARGET_DIR" ]; then
-
-          echo
-          echo "错误：找不到 Rockchip ARMv8 固件目录！"
-          echo
-
-          echo "当前实际生成的 Target 目录:"
-          find "$GITHUB_WORKSPACE/openwrt/bin/targets" \
-            -mindepth 1 \
-            -maxdepth 3 \
-            -type d \
-            -print 2>/dev/null || true
-
-          echo
-          echo "完整 bin/targets 内容:"
+          echo "当前 bin/targets 内容:"
           find "$GITHUB_WORKSPACE/openwrt/bin/targets" \
             -maxdepth 5 \
             -print 2>/dev/null || true
@@ -499,17 +361,13 @@ jobs:
 
         cd "$TARGET_DIR"
 
-        echo
-        echo "========================================"
-        echo "当前固件输出目录"
-        echo "========================================"
-
-        pwd
+        echo "固件输出目录:"
+        echo "$PWD"
 
         echo
-        echo "========================================"
+        echo "=============================="
         echo "编译生成的全部文件"
-        echo "========================================"
+        echo "=============================="
 
         find . \
           -maxdepth 1 \
@@ -517,36 +375,10 @@ jobs:
           -printf '%f\n' \
           | sort
 
-        # ========================================================
-        # 检查 hinlink_opc-h6xk
-        # ========================================================
         echo
-        echo "========================================"
-        echo "检查 hinlink_opc-h6xk 固件"
-        echo "========================================"
-
-        HINLINK_FILES=$(find . \
-          -maxdepth 1 \
-          -type f \
-          -iname '*hinlink*' \
-          -printf '%f\n' \
-          | sort || true)
-
-        if [ -n "$HINLINK_FILES" ]; then
-          echo "检测到 hinlink 相关文件:"
-          echo "$HINLINK_FILES"
-        else
-          echo "警告：没有检测到文件名包含 hinlink 的文件。"
-          echo "继续检查 IMG 文件。"
-        fi
-
-        # ========================================================
-        # 检查 IMG 固件
-        # ========================================================
-        echo
-        echo "========================================"
+        echo "=============================="
         echo "检测 IMG 固件"
-        echo "========================================"
+        echo "=============================="
 
         IMAGE_FILES=$(find . \
           -maxdepth 1 \
@@ -557,18 +389,11 @@ jobs:
             -o -name '*.img.zst' \
             -o -name '*.img' \
           \) \
-          -printf '%f\n' \
-          | sort || true)
+          -print)
 
         if [ -z "$IMAGE_FILES" ]; then
-
           echo
-          echo "错误：Rockchip ARMv8 没有找到 IMG 固件！"
-          echo
-
-          echo "当前目录:"
-          pwd
-
+          echo "错误：没有找到 IMG 固件镜像！"
           echo
           echo "当前目录全部文件:"
           find . \
@@ -599,23 +424,13 @@ jobs:
         echo "找到以下 IMG 固件:"
         echo "$IMAGE_FILES"
 
-        # ========================================================
-        # 删除 packages
-        # ========================================================
         echo
-        echo "========================================"
-        echo "删除 packages 目录"
-        echo "========================================"
+        echo "删除 packages 目录..."
 
         rm -rf packages
 
-        # ========================================================
-        # 清理非 IMG 固件
-        # ========================================================
         echo
-        echo "========================================"
-        echo "清理非固件文件"
-        echo "========================================"
+        echo "清理非固件文件..."
 
         find . \
           -maxdepth 1 \
@@ -626,13 +441,10 @@ jobs:
           ! -name '*.img' \
           -delete
 
-        # ========================================================
-        # 最终检查
-        # ========================================================
         echo
-        echo "========================================"
+        echo "=============================="
         echo "最终固件文件"
-        echo "========================================"
+        echo "=============================="
 
         find . \
           -maxdepth 1 \
@@ -641,40 +453,15 @@ jobs:
           | sort
 
         echo
-        echo "========================================"
-        echo "最终 IMG 文件"
-        echo "========================================"
-
-        FINAL_IMAGES=$(find . \
-          -maxdepth 1 \
-          -type f \
-          \( \
-            -name '*.img.gz' \
-            -o -name '*.img.xz' \
-            -o -name '*.img.zst' \
-            -o -name '*.img' \
-          \) \
-          -printf '%f\n' \
-          | sort)
-
-        if [ -z "$FINAL_IMAGES" ]; then
-          echo "错误：清理后 IMG 文件不存在！"
-          exit 1
-        fi
-
-        echo "$FINAL_IMAGES"
-
-        echo
-        echo "========================================"
-        echo "设置固件目录"
-        echo "========================================"
+        echo "设置固件目录:"
+        echo "$PWD"
 
         echo "FIRMWARE=$PWD" >> "$GITHUB_ENV"
         echo "status=success" >> "$GITHUB_OUTPUT"
 
-    # ============================================================
+    # ================================
     # 上传 IMG 固件 Artifact
-    # ============================================================
+    # ================================
     - name: 上传 IMG 固件
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success' && !cancelled()
@@ -687,15 +474,13 @@ jobs:
           ${{ env.FIRMWARE }}/*.img
         if-no-files-found: error
 
-    # ============================================================
+    # ================================
     # 生成 Release 标签
-    # ============================================================
+    # ================================
     - name: 生成发布标签
       id: tag
       if: steps.compile.outputs.status == 'success' && steps.organize.outputs.status == 'success' && env.UPLOAD_RELEASE == 'true' && !cancelled()
       run: |
-        set -e
-
         RELEASE_TAG="$(date +"%Y.%m.%d-%H.%M")-${{ matrix.ARCHITECTURE }}"
 
         echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
@@ -706,10 +491,6 @@ jobs:
         📂 源码: ${{ env.REPO_URL }}
 
         🌳 分支: ${{ matrix.REPO_BRANCH }}
-
-        🎯 Target: rockchip/armv8
-
-        📦 Device: hinlink_opc-h6xk
 
         ⏱️ 编译时间: $(date +"%Y年%m月%d日%H时%M分")
 
@@ -727,13 +508,12 @@ jobs:
 
         echo "status=success" >> "$GITHUB_OUTPUT"
 
-        echo
         echo "Release 标签:"
         echo "$RELEASE_TAG"
 
-    # ============================================================
+    # ================================
     # 自动发布 Release
-    # ============================================================
+    # ================================
     - name: 自动发布固件到 Releases
       uses: softprops/action-gh-release@v2
       if: steps.tag.outputs.status == 'success' && !cancelled()
@@ -748,9 +528,9 @@ jobs:
           ${{ env.FIRMWARE }}/*.img
         fail_on_unmatched_files: true
 
-    # ============================================================
+    # ================================
     # 删除运行记录
-    # ============================================================
+    # ================================
     - name: 删除运行记录
       uses: xiaomeng9597/delete-workflow-runs@main
       if: always()
@@ -759,9 +539,9 @@ jobs:
         keep_minimum_runs: 15
         token: ${{ env.GITHUB_TOKEN }}
 
-    # ============================================================
+    # ================================
     # 删除自动发布的旧固件
-    # ============================================================
+    # ================================
     - name: 删除自动发布的旧固件
       uses: dev-drprasad/delete-older-releases@v0.3.3
       if: env.UPLOAD_RELEASE == 'true' && !cancelled()
